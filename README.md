@@ -260,6 +260,12 @@ sessioni lunghe conviene il modello cloud. Nel pannello: "Agente predefinito →
 **Errore `model ... is unavailable in the current catalog`.** Il `defaultModel` punta a un modello
 non registrato: rilancia `register-provider.py --default-model local`.
 
+**"Context compaction failed".** Il checkpoint non è arrivato al runtime. Controlla
+`~/.mlxControl/logs/fast-compact.error.log`: se la richiesta è stata servita (`200`) ma il runtime
+l'ha rifiutata, il problema è nella risposta. La versione corrente scrive lo stream SSE con il
+framing chunked corretto (prima il terminatore `[DONE]` finiva fuori dai chunk e il parser HTTP
+del runtime segnalava un errore, con 40 s di attesa).
+
 **Il modello ripete la stessa domanda all'infinito.** Succede quando una sua chiamata a un tool
 viene rifiutata dal runtime (per esempio `ask_user` con gli argomenti malformati): il modello
 riprova identico. La patch del server (`scripts/patch-mlx-server.py`) corregge gli argomenti

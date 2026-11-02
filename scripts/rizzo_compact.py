@@ -849,10 +849,15 @@ def build_checkpoint(messages: list[dict[str, Any]]) -> str:
         parts.append(f"## {title}")
         if items:
             for item in items:
-                parts.append(f"- {item}" if not item.startswith("- ") else item)
+                text = item if not item.startswith("- ") else item
+                parts.append(f"- {truncate(text, 600)}")
         else:
             parts.append("- (none)")
-    return "\n".join(parts)
+    checkpoint = "\n".join(parts)
+    # Tetto di dimensione: un checkpoint enorme non serve e appesantisce il contesto.
+    if len(checkpoint) > 8000:
+        checkpoint = checkpoint[:8000].rsplit("\n", 1)[0] + "\n[… checkpoint troncato …]"
+    return checkpoint
 
 
 

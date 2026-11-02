@@ -381,7 +381,9 @@ class Handler(BaseHTTPRequestHandler):
             chunk({"role": "assistant", "content": ""})
             chunk({"content": content})
             chunk({}, "stop")
-            self.wfile.write(b"data: [DONE]\n\n")
+            # [DONE] deve viaggiare dentro un chunk chunked come gli altri.
+            done = b"data: [DONE]\n\n"
+            self.wfile.write(b"%X\r\n" % len(done) + done + b"\r\n")
             self.wfile.write(b"0\r\n\r\n")
             self.wfile.flush()
             return
