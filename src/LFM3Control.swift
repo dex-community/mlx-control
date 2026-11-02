@@ -276,26 +276,34 @@ final class AppState: ObservableObject {
     }
 }
 
-// MARK: - Interfaccia
+// MARK: - Interfaccia (pannello)
 
-private struct SectionHeader: View {
-    let text: String
+private struct ValuePicker<T: Hashable>: View {
+    @Binding var selection: T
+    let options: [T]
+    let label: (T) -> String
+
     var body: some View {
-        Text(text.uppercased())
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(.tertiary)
-            .padding(.top, 2)
+        Picker("", selection: $selection) {
+            ForEach(options, id: \.self) { Text(label($0)).tag($0) }
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .controlSize(.small)
+        .frame(width: 96, alignment: .leading)
     }
 }
+
+
 
 private struct ServiceRow: View {
     @ObservedObject var service: Service
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .center, spacing: 8) {
             Image(systemName: service.symbol)
                 .font(.system(size: 12))
-                .frame(width: 16)
+                .frame(width: 16, alignment: .center)
                 .foregroundStyle(service.isRunning ? Color.green : Color.secondary)
             VStack(alignment: .leading, spacing: 0) {
                 Text(service.title).font(.system(size: 12))
@@ -303,35 +311,55 @@ private struct ServiceRow: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
-            Spacer(minLength: 8)
-            if service.isBusy {
-                ProgressView().controlSize(.small).scaleEffect(0.7)
-            } else {
-                Button {
-                    service.toggle()
-                } label: {
+            Button {
+                service.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: service.isRunning ? "stop.fill" : "play.fill")
+                        .font(.system(size: 8))
                     Text(service.isRunning ? "Spegni" : "Accendi")
-                        .font(.system(size: 10, weight: .medium))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(
-                            Capsule().fill(
-                                (service.isRunning ? Color.red : Color.green).opacity(0.16)
-                            )
-                        )
-                        .foregroundStyle(service.isRunning ? Color.red : Color.green)
+                        .font(.system(size: 11))
                 }
-                .buttonStyle(.plain)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule().fill((service.isRunning ? Color.red : Color.green).opacity(0.16))
+                )
+                .foregroundStyle(service.isRunning ? Color.red : Color.green)
             }
+            .buttonStyle(.plain)
+            .disabled(service.isBusy)
         }
         .padding(.vertical, 1)
+    }
+}
+
+private struct SectionLabel: View {
+    let text: String
+    var body: some View {
+        Text(text.uppercased())
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(.tertiary)
     }
 }
 
 struct MenuContent: View {
     @ObservedObject var state: AppState
 
-    /// Binding che applica subito la modifica (niente pulsante "Applica" dimenticato).
+    /// Riga etichetta + controllo, tutto allineato a sinistra.
+    @ViewBuilder
+    private func paramRow<T: View>(_ label: String, @ViewBuilder control: () -> T) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .font(.system(size: 12))
+                .frame(width: 148, alignment: .leading)
+            control()
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 1)
+    }
+
+    /// Binding che applica subito la modifica (nessun pulsante "Applica" da ricordare).
     private func bind<T>(_ get: @escaping () -> T, _ set: @escaping (T) -> Void) -> Binding<T> {
         Binding(get: get, set: { newValue in
             set(newValue)
@@ -340,131 +368,172 @@ struct MenuContent: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 9) {
             header
-            Divider()
-
-            SectionHeader(text: "Servizi")
-            ServiceRow(service: state.model)
-            ServiceRow(service: state.caveman)
 
             Divider()
 
-            SectionHeader(text: "Parametri modello")
-            Picker("Temperatura", selection: bind({ state.settings.temperature }, { state.settings.temperature = $0 })) {
-                ForEach([0.0, 0.1, 0.3, 0.5, 0.7, 1.0], id: \.self) {
-                    Text(String(format: "%.1f", $0)).tag($0)
-                }
-            }
-            Picker("Top-k", selection: bind({ state.settings.topK }, { state.settings.topK = $0 })) {
-                ForEach([0, 20, 50, 100], id: \.self) {
-                    Text($0 == 0 ? "off" : String($0)).tag($0)
-                }
-            }
-            Picker("Repetition penalty", selection: bind({ state.settings.repetitionPenalty }, { state.settings.repetitionPenalty = $0 })) {
-                ForEach([1.0, 1.05, 1.1, 1.2], id: \.self) {
-                    Text(String(format: "%.2f", $0)).tag($0)
-                }
-            }
-            Picker("Min-p", selection: bind({ state.settings.minP }, { state.settings.minP = $0 })) {
-                ForEach([0.0, 0.05, 0.1], id: \.self) {
-                    Text(String(format: "%.2f", $0)).tag($0)
-                }
-            }
-            Picker("Max output tokens", selection: bind({ state.settings.maxTokens }, { state.settings.maxTokens = $0 })) {
-                ForEach([2048, 4096, 8192, 16384], id: \.self) {
-                    Text(String($0)).tag($0)
-                }
-            }
-            Toggle("Thinking (ragionamento)", isOn: bind({ state.settings.enableThinking }, { state.settings.enableThinking = $0 }))
-
-            SectionHeader(text: "Finestra di contesto")
-            Picker("Context window", selection: Binding(
-                get: { state.contextWindow },
-                set: { state.applyContext($0) }
-            )) {
-                ForEach([32768, 65536, 131072, 262144], id: \.self) {
-                    Text("\($0 / 1024)K").tag($0)
-                }
+            VStack(alignment: .leading, spacing: 5) {
+                SectionLabel(text: "Servizi")
+                ServiceRow(service: state.model)
+                ServiceRow(service: state.caveman)
             }
 
             Divider()
 
-            if let busy = state.busyMessage {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small).scaleEffect(0.6)
-                    Text(busy).font(.system(size: 10)).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 5) {
+                SectionLabel(text: "Parametri modello")
+                paramRow("Temperatura") {
+                    ValuePicker(
+                        selection: bind({ state.settings.temperature }, { state.settings.temperature = $0 }),
+                        options: [0.0, 0.1, 0.3, 0.5, 0.7, 1.0],
+                        label: { String(format: "%.1f", $0) }
+                    )
                 }
-            }
-
-            HStack {
-                if let applied = state.lastApplied {
-                    Label("Applicato \(applied.formatted(date: .omitted, time: .shortened))", systemImage: "checkmark.circle.fill")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.green)
-                } else {
-                    Text("Modifiche applicate automaticamente")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
+                paramRow("Top-k") {
+                    ValuePicker(
+                        selection: bind({ state.settings.topK }, { state.settings.topK = $0 }),
+                        options: [0, 20, 50, 100],
+                        label: { $0 == 0 ? "off" : String($0) }
+                    )
                 }
-                Spacer()
-                Button {
-                    state.settings.applyRecommended()
-                    state.applySampling()
-                } label: {
-                    Text("Consigliati")
-                        .font(.system(size: 10, weight: .medium))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(Color.blue.opacity(0.15)))
-                        .foregroundStyle(Color.blue)
+                paramRow("Min-p") {
+                    ValuePicker(
+                        selection: bind({ state.settings.minP }, { state.settings.minP = $0 }),
+                        options: [0.0, 0.05, 0.1],
+                        label: { String(format: "%.2f", $0) }
+                    )
                 }
-                .buttonStyle(.plain)
-
-                Button {
-                    state.restartStack()
-                } label: {
-                    Text("Riavvia")
-                        .font(.system(size: 10, weight: .medium))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
-                        .foregroundStyle(.secondary)
+                paramRow("Repetition penalty") {
+                    ValuePicker(
+                        selection: bind({ state.settings.repetitionPenalty }, { state.settings.repetitionPenalty = $0 }),
+                        options: [1.0, 1.05, 1.1, 1.2],
+                        label: { String(format: "%.2f", $0) }
+                    )
                 }
-                .buttonStyle(.plain)
+                paramRow("Max output tokens") {
+                    ValuePicker(
+                        selection: bind({ state.settings.maxTokens }, { state.settings.maxTokens = $0 }),
+                        options: [2048, 4096, 8192, 16384],
+                        label: { String($0) }
+                    )
+                }
+                HStack(spacing: 8) {
+                    Toggle(isOn: bind({ state.settings.enableThinking }, { state.settings.enableThinking = $0 })) {
+                        Text("Thinking (ragionamento)")
+                            .font(.system(size: 12))
+                    }
+                    .toggleStyle(.checkbox)
+                    .controlSize(.small)
+                }
+                .padding(.vertical, 1)
             }
 
             Divider()
 
-            Button("Apri log del server") { state.openLogs() }
-            Button("Apri cartella di installazione") { state.openFolder() }
+            VStack(alignment: .leading, spacing: 5) {
+                SectionLabel(text: "Finestra di contesto")
+                paramRow("Context window") {
+                    ValuePicker(
+                        selection: Binding(get: { state.contextWindow }, set: { state.applyContext($0) }),
+                        options: [32768, 65536, 131072, 262144],
+                        label: { "\($0 / 1024)K" }
+                    )
+                }
+                Text("input+output ≤ \(state.contextWindow / 1024)K")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .padding(.leading, 156)
+            }
+
+            Divider()
+
+            footer
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .frame(width: 290)
+        .padding(14)
+        .frame(width: 340, alignment: .leading)
+        .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { state.reloadFromDisk() }
     }
 
     private var header: some View {
         HStack(spacing: 9) {
             ZStack {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(state.model.isRunning ? Color.green.opacity(0.18) : Color.secondary.opacity(0.14))
-                    .frame(width: 26, height: 26)
+                    .frame(width: 28, height: 28)
                 Image(systemName: "cpu")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(state.model.isRunning ? Color.green : Color.secondary)
             }
             VStack(alignment: .leading, spacing: 1) {
                 Text("LFM3 1.7B · MLX")
-                    .font(.system(size: 12, weight: .semibold))
-                Text(state.model.isRunning ? "127.0.0.1:8080 · attivo" : "server spento")
+                    .font(.system(size: 13, weight: .semibold))
+                Text(state.model.isRunning ? "127.0.0.1:8080 · attivo" : "127.0.0.1:8080 · spento")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
-            Spacer()
+            Spacer(minLength: 0)
+            if let busy = state.busyMessage {
+                HStack(spacing: 5) {
+                    ProgressView().controlSize(.small).scaleEffect(0.6)
+                    Text(busy).font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+            }
         }
-        .padding(.bottom, 2)
+    }
+
+    private var footer: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Button {
+                    state.settings.applyRecommended()
+                    state.applySampling()
+                } label: {
+                    Text("Consigliati").font(.system(size: 11))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button {
+                    state.restartStack()
+                } label: {
+                    Text("Riavvia").font(.system(size: 11))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                if let applied = state.lastApplied {
+                    Text("applicato \(applied.formatted(date: .omitted, time: .shortened))")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                } else {
+                    Text("le modifiche si applicano subito")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 6) {
+                Button {
+                    state.openLogs()
+                } label: {
+                    Text("Apri log").font(.system(size: 11))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button {
+                    state.openFolder()
+                } label: {
+                    Text("Apri cartella").font(.system(size: 11))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                Spacer(minLength: 0)
+            }
+        }
     }
 }
 
@@ -480,6 +549,7 @@ struct LFM3ControlApp: App {
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(state.model.isRunning ? Color.green : Color.secondary)
         }
-        .menuBarExtraStyle(.menu)
+        // Pannello libero: il menu nativo imporrebbe sottomenu e righe a tutta larghezza.
+        .menuBarExtraStyle(.window)
     }
 }
