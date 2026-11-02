@@ -166,6 +166,59 @@ cat ~/.mlxControl/state/last-compaction.json
 | `max_tokens` | tetto di token del checkpoint |
 | `tool_chars` | caratteri tenuti per output di tool |
 | `model` | alias del modello da usare per il checkpoint (vuoto = modello di sessione) |
+| `rizzo_autostart` | avvia Rizzo Flow quando serve (default `true`) |
+| `rizzo_idle_seconds` | secondi di inattività dopo cui Rizzo Flow viene spento (default `900`) |
+| `mlx_memory_guard` | riavvia il server MLX quando è inattivo e occupa troppa memoria (default `true`) |
+| `mlx_memory_threshold_bytes` | soglia di memoria del server MLX (default `3.500.000.000`, ≈ 3,5 GB) |
+| `mlx_memory_guard_idle_seconds` | inattività minima prima del riavvio (default `90`) |
+
+## Memoria: perché il server occupa così tanto
+
+Il server MLX gira sulla **memoria unificata** del Mac: pesi del modello, cache KV del contesto e
+cache dei prompt condividono la RAM con tutto il resto del sistema. Su un Mac da 16 GB, una
+conversazione lunga può portare il processo a **10-12 GB** — è il comportamento atteso di MLX, ma
+niente di necessario.
+
+MLX Control lo tiene sotto controllo in tre modi:
+
+1. **Cache dei prompt limitata** (`model-settings.json`): il default di `mlx_lm` è 3 GB di cache
+   conservate tra le richieste; qui è **512 MB** con 2 voci. La cache serve al riutilizzo del
+   prefisso: a valle della compattazione il contesto cambia, quindi non serve a nulla.
+
+   ```json
+   { "prompt_cache_size": 2, "prompt_cache_bytes": 536870912 }
+   ```
+
+2. **Rizzo Flow on demand**: il motore di decisioni tiene in memoria un modello da 1,7 GB
+   (≈ 2 GB residenti). Non serve sempre, quindi il proxy di compattazione lo **avvia alla prima
+   richiesta** e lo **spegne dopo 15 minuti di inattività** (`rizzo_idle_seconds`). Nel pannello
+   Rizzo Flow compare come "pronto · si avvia da solo".
+
+3. **Memory guard**: dopo una compattazione MLX continua a tenere i buffer del contesto elaborato
+   (per restituire la memoria al sistema serve riavviarlo). Il proxy — che è il punto di passaggio
+   obbligato di MiniMax Code — riavvia il server MLX **solo quando non ci sono richieste in volo** e
+   la memoria supera la soglia (3,5 GB per default). Le richieste che arrivano durante il riavvio
+   vengono trattenute e ritentate.
+
+   Il server espone anche `GET /admin/clear-cache`, che chiama `mx.clear_cache()`:
+
+   ```bash
+   curl -s http://127.0.0.1:8080/admin/clear-cache
+   curl -s http://127.0.0.1:8081/memory   # memoria del server MLX in byte
+   ```
+
+Misure reali su questo Mac (16 GB, LFM3-1.7B-MLX-4bit):
+
+| situazione | prima | dopo |
+|---|---|---|
+| server MLX a riposo | 1,1 GB | 1,1 GB |
+| dopo una richiesta da 49k token | 4,7 GB | **2,9 GB** |
+| dopo una richiesta da 231k token | 6,2 GB | **≈ 3,4 GB** |
+| Rizzo Flow in inattività | 2,0 GB sempre attivo | **0 (si spegne)** |
+
+> Nota: la quantizzazione della KV cache (`kv_bits`) **non** è compatibile con LFM3: il modello
+> usa una `RotatingKVCache` ibrida e la quantizzazione non è implementata
+> (`RotatingKVCache Quantization NYI`). Per questo il tetto si applica alla cache dei prompt.
 
 ## La Menu Bar Extra
 
@@ -174,6 +227,7 @@ cat ~/.mlxControl/state/last-compaction.json
 Dalla barra dei menu:
 
 - **Servizi** — accendi/spegni modello, proxy Caveman, Rizzo Flow e compattazione veloce;
+  nella barra del titolo compare la memoria occupata dal server MLX;
 - **Modello** — modello attivo e catalogo Hugging Face con ricerca e download integrato;
 - **Agente predefinito** — scegli se l'agente usa il modello locale o MiniMax M3.1 Flash;
 - **Compressione del contesto** — Nativa / Rizzo Flow / Rizzo senza LLM, con installazione di Rizzo

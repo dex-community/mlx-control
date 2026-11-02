@@ -25,6 +25,10 @@ log() { printf '%s\n' "$*"; }
 have_uv() { command -v uv >/dev/null 2>&1; }
 
 write_plist() {
+  # In regime "on demand" (predefinito) il servizio non si riavvia da solo e
+  # non parte al login: lo avvia il proxy di compattazione quando serve e lo
+  # spegne dopo un periodo di inattivita'. Con RIZZO_KEEPALIVE=1 si torna al
+  # comportamento classico (sempre attivo).
   cat > "$PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -38,9 +42,9 @@ write_plist() {
     <string>${RIZZO_DIR}/run-rizzo.sh</string>
   </array>
   <key>RunAtLoad</key>
-  <true/>
+  <${RIZZO_RUNATLOAD:-false}/>
   <key>KeepAlive</key>
-  <true/>
+  <${RIZZO_KEEPALIVE:-false}/>
   <key>WorkingDirectory</key>
   <string>${RIZZO_DIR}</string>
   <key>StandardOutPath</key>
@@ -94,15 +98,27 @@ install_rizzo() {
 start() {
   write_runner
   write_plist
-  launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null
-  sleep 1
-  launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null \
-    || launchctl kickstart -k "gui/$(id -u)/${LABEL}"
+  LABEL_ID="gui/$(id -u)/${LABEL}"
+  if launchctl list | grep -q "${LABEL}"; then
+    launchctl kickstart -k "$LABEL_ID" 2>/dev/null
+  else
+    # Il job deve essere rimosso del tutto prima del bootstrap.
+    launchctl bootout "$LABEL_ID" 2>/dev/null
+    sleep 1
+    if ! launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null; then
+      sleep 1.5
+      launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null
+    fi
+    launchctl kickstart -k "$LABEL_ID" 2>/dev/null
+  fi
   log "Rizzo Flow avviato su ${URL}"
 }
 
 stop() {
-  launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null && log "Rizzo Flow fermato"
+  # SIGTERM invece di bootout: il job resta caricato (e' cosi' che il proxy
+  # puo' riavviarlo al volo) ma il processo viene fermato e non riparte da solo.
+  launchctl kill SIGTERM "gui/$(id -u)/${LABEL}" 2>/dev/null && log "Rizzo Flow fermato"
+  return 0
 }
 
 restart() { stop; sleep 1; start; }

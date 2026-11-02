@@ -39,8 +39,10 @@ Variabili d'ambiente:
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -92,9 +94,226 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "maxStateTokens": DEFAULTS["maxStateTokens"],
     "maxRequestTokens": DEFAULTS["maxRequestTokens"],
     "truncateHeadChars": DEFAULTS["truncateHeadChars"],
+    "rizzo_autostart": True,
+    "rizzo_idle_seconds": 900,
 }
 
 _lock = threading.Lock()
+
+# ---------------------------------------------------------------------------
+# Ciclo di vita di Rizzo Flow (on demand)
+#
+# Rizzo Flow tiene in memoria un modello da 1,7 GB (circa 2 GB di RAM
+# residenti). Tenerlo sempre acceso e' costoso per un servizio che serve
+# solo durante le compattazioni: qui viene avviato alla prima richiesta e
+# spento dopo un periodo di inattivita'. Se l'avvio fallisce il proxy
+# ricade sulla compattazione nativa (la sessione continua a funzionare).
+# ---------------------------------------------------------------------------
+
+RIZZO_LABEL = "com.minimax.rizzo-flow"
+_rizzo_lock = threading.Lock()
+_rizzo_last_use = 0.0
+_rizzo_state = {"running": False, "started_by_us": False}
+
+
+def _launchctl(*args: str, timeout: float = 20.0) -> bool:
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            ["launchctl", *args], capture_output=True, timeout=timeout, check=False
+        )
+        return result.returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _rizzo_healthy(timeout: float = 5.0) -> bool:
+    try:
+        RizzoClient(RIZZO_URL, timeout=timeout).health()
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def ensure_rizzo(autostart: bool = True, timeout: float = 240.0) -> bool:
+    """Garantisce che Rizzo Flow sia raggiungibile, avviandolo se serve."""
+    global _rizzo_last_use
+    with _rizzo_lock:
+        if _rizzo_healthy():
+            _rizzo_last_use = time.time()
+            _rizzo_state["running"] = True
+            return True
+        if not autostart:
+            return False
+        uid = os.getuid()
+        started = _launchctl("kickstart", "-k", f"gui/{uid}/{RIZZO_LABEL}")
+        if not started:
+            # Il job potrebbe non essere caricato: lo si ricarica e si ritenta.
+            plist = os.path.expanduser(f"~/Library/LaunchAgents/{RIZZO_LABEL}.plist")
+            if os.path.exists(plist):
+                _launchctl("bootstrap", f"gui/{uid}", plist)
+                started = _launchctl("kickstart", "-k", f"gui/{uid}/{RIZZO_LABEL}")
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(2.0)
+            if _rizzo_healthy():
+                _rizzo_last_use = time.time()
+                _rizzo_state["running"] = True
+                _rizzo_state["started_by_us"] = True
+                return True
+        return False
+
+
+def release_rizzo() -> None:
+    """Ferma Rizzo Flow (SIGTERM: il job resta caricato e si puo' riavviare)."""
+    with _rizzo_lock:
+        uid = os.getuid()
+        _launchctl("kill", "SIGTERM", f"gui/{uid}/{RIZZO_LABEL}")
+        _rizzo_state["running"] = False
+        _rizzo_state["started_by_us"] = False
+
+
+def _rizzo_idle_watcher() -> None:
+    """Spegne Rizzo Flow quando non viene piu' usato da un po'."""
+    while True:
+        time.sleep(30.0)
+        try:
+            with _rizzo_lock:
+                idle = _rizzo_last_use
+                running = _rizzo_state["running"]
+            if running and idle and (time.time() - idle) > _rizzo_idle_limit():
+                release_rizzo()
+        except Exception:  # noqa: BLE001
+            continue
+
+
+def _rizzo_idle_limit() -> float:
+    try:
+        config = load_config()
+        return float(config.get("rizzo_idle_seconds", 900))
+    except Exception:  # noqa: BLE001
+        return 900.0
+
+
+# ---------------------------------------------------------------------------
+# Memory guard del server MLX
+#
+# MLX lavora sulla memoria unificata: dopo una compattazione il server tiene
+# in memoria i buffer del contesto elaborato e non li restituisce al sistema
+# (per liberarli serve riavviarlo). Qui il proxy - che e' il punto di passaggio
+# obbligato di MiniMax Code - riavvia il server solo quando non ci sono
+# richieste in volo e la memoria supera la soglia configurata.
+# ---------------------------------------------------------------------------
+
+MLX_LABEL = "com.minimax.lfm3-mlx-server"
+_restart_lock = threading.Lock()
+_server_ready = threading.Event()
+_server_ready.set()
+_inflight = 0
+_last_request_end = time.time()
+
+
+def _server_health_ok(timeout: float = 5.0) -> bool:
+    try:
+        with urllib.request.urlopen(f"{UPSTREAM}/health", timeout=timeout) as response:
+            return response.status == 200
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def mlx_memory_bytes() -> int:
+    """Memoria attiva del server MLX (buffer vivi, non cache)."""
+    try:
+        with urllib.request.urlopen(f"{UPSTREAM}/admin/clear-cache", timeout=20) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        return int(data.get("active_after") or data.get("active_before") or 0)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def process_memory_bytes() -> int:
+    """Memoria del processo server MLX come la vede il sistema (Metal incluso)."""
+    try:
+        import subprocess
+
+        found = subprocess.run(
+            ["pgrep", "-f", "mlx_lm.server"], capture_output=True, text=True, timeout=10
+        ).stdout.split()
+        if not found:
+            return 0
+        out = subprocess.run(
+            ["top", "-l", "1", "-pid", found[0], "-stats", "mem"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout
+        # top stampa il valore come "1133M" (o "1,2G") su una riga dedicata.
+        for token in reversed(out.replace(",", "").split()):
+            match = re.fullmatch(r"([0-9.]+)([KMG])", token)
+            if match:
+                factor = {"K": 1024, "M": 1024**2, "G": 1024**3}[match.group(2)]
+                return int(float(match.group(1)) * factor)
+    except Exception:  # noqa: BLE001
+        pass
+    return 0
+
+
+def restart_mlx_server(timeout: float = 240.0) -> bool:
+    """Riavvia il server MLX (rilascia la memoria) e attende che torni su."""
+    global _last_request_end
+    with _restart_lock:
+        _server_ready.clear()
+        try:
+            uid = os.getuid()
+            ok = _launchctl("kickstart", "-k", f"gui/{uid}/{MLX_LABEL}")
+            if not ok:
+                plist = os.path.expanduser(f"~/Library/LaunchAgents/{MLX_LABEL}.plist")
+                if os.path.exists(plist):
+                    _launchctl("bootstrap", f"gui/{uid}", plist)
+                    ok = _launchctl("kickstart", "-k", f"gui/{uid}/{MLX_LABEL}")
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                time.sleep(1.0)
+                if _server_health_ok():
+                    return True
+            return False
+        finally:
+            _server_ready.set()
+            _last_request_end = time.time()
+
+
+def _memory_guard() -> None:
+    """Riavvia il server MLX quando e' inattivo e occupa troppa memoria."""
+    while True:
+        time.sleep(30.0)
+        try:
+            config = load_config()
+            if not bool(config.get("mlx_memory_guard", True)):
+                continue
+            threshold = int(config.get("mlx_memory_threshold_bytes", 3_500_000_000))
+            idle_limit = float(config.get("mlx_memory_guard_idle_seconds", 90))
+            with _inflight_lock:
+                busy = _inflight > 0
+            if busy or (time.time() - _last_request_end) < idle_limit:
+                continue
+            used = max(mlx_memory_bytes(), process_memory_bytes())
+            if used and used > threshold:
+                restart_mlx_server()
+        except Exception:  # noqa: BLE001
+            continue
+
+
+_inflight_lock = threading.Lock()
+
+
+def release_upstream_cache() -> bool:
+    """Chiede al server MLX di rilasciare la cache di allocazione (mx.clear_cache)."""
+    try:
+        with urllib.request.urlopen(f"{UPSTREAM}/admin/clear-cache", timeout=15) as response:
+            return response.status == 200
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def load_config() -> dict[str, Any]:
@@ -200,6 +419,7 @@ def accelerate(
     payload: dict[str, Any], config: dict[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any], str | None]:
     """Ritorna (payload modificato, statistiche, checkpoint già pronto se senza LLM)."""
+    global _rizzo_last_use
     stats: dict[str, Any] = {"mode": config.get("mode", "rizzo"), "accelerated": False}
     messages = payload.get("messages")
     if not isinstance(messages, list) or not messages:
@@ -220,6 +440,8 @@ def accelerate(
     result = None
     prune = None
     try:
+        if not ensure_rizzo(bool(config.get("rizzo_autostart", True))):
+            raise RuntimeError("Rizzo Flow non raggiungibile")
         client.health()
         options = {
             "keepThreshold": config.get("keepThreshold", DEFAULTS["keepThreshold"]),
@@ -242,6 +464,9 @@ def accelerate(
     except Exception as error:  # noqa: BLE001
         stats["rizzo"] = f"non disponibile ({type(error).__name__})"
         result = None
+
+    if result is not None or prune is not None:
+        _rizzo_last_use = time.time()
 
     if result is not None:
         stats.update(
@@ -304,6 +529,24 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- GET ---------------------------------------------------------------
     def do_GET(self) -> None:  # noqa: N802
+        if self.path.rstrip("/") in ("/memory", "/fastcompact/memory"):
+            # Memoria del server MLX: quanto occupa davvero (Metal incluso).
+            body = json.dumps(
+                {
+                    "mlx_process_bytes": process_memory_bytes(),
+                    "mlx_active_bytes": mlx_memory_bytes(),
+                    "rizzo_running": _rizzo_healthy(timeout=2.0),
+                    "threshold_bytes": int(
+                        load_config().get("mlx_memory_threshold_bytes", 3_500_000_000)
+                    ),
+                }
+            ).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path.rstrip("/") in ("/health", "/fastcompact/health"):
             config = load_config()
             body = json.dumps(
@@ -328,6 +571,17 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- POST --------------------------------------------------------------
     def do_POST(self) -> None:  # noqa: N802
+        global _inflight, _last_request_end
+        with _inflight_lock:
+            _inflight += 1
+        try:
+            self._handle_post()
+        finally:
+            with _inflight_lock:
+                _inflight -= 1
+                _last_request_end = time.time()
+
+    def _handle_post(self) -> None:
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length else b""
 
@@ -354,6 +608,9 @@ class Handler(BaseHTTPRequestHandler):
         }
         headers["Content-Length"] = str(len(body))
         self._send_upstream(body, headers)
+        # A compattazione finita il server MLX tiene ancora in memoria i buffer
+        # del contesto elaborato: glieli si restituisce subito.
+        release_upstream_cache()
 
     # -- risposta sintetica (checkpoint senza generazione) ------------------
     def _send_synthetic(self, content: str, payload: dict[str, Any]) -> None:
@@ -431,50 +688,78 @@ class Handler(BaseHTTPRequestHandler):
     def _send_upstream(self, body: bytes, headers: dict[str, str]) -> None:
         url = f"{UPSTREAM}{self.path}"
         request = urllib.request.Request(url, data=body, headers=headers, method=self.command)
-        try:
-            with urllib.request.urlopen(request, timeout=1800) as response:
-                content_type = response.headers.get("Content-Type", "application/json")
-                self.send_response(response.status)
-                self.send_header("Content-Type", content_type)
-                if "text/event-stream" in content_type:
-                    self.send_header("Cache-Control", "no-cache")
-                    self.send_header("Transfer-Encoding", "chunked")
-                    self.end_headers()
-                    while True:
-                        chunk = response.read(4096)
-                        if not chunk:
-                            break
-                        self.wfile.write(b"%X\r\n" % len(chunk) + chunk + b"\r\n")
+        # Se il memory guard ha avviato un riavvio del server, si aspetta.
+        _server_ready.wait(240)
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                with urllib.request.urlopen(request, timeout=1800) as response:
+                    content_type = response.headers.get("Content-Type", "application/json")
+                    self.send_response(response.status)
+                    self.send_header("Content-Type", content_type)
+                    if "text/event-stream" in content_type:
+                        self.send_header("Cache-Control", "no-cache")
+                        self.send_header("Transfer-Encoding", "chunked")
+                        self.end_headers()
+                        while True:
+                            chunk = response.read(4096)
+                            if not chunk:
+                                break
+                            self.wfile.write(b"%X\r\n" % len(chunk) + chunk + b"\r\n")
+                            self.wfile.flush()
+                        self.wfile.write(b"0\r\n\r\n")
                         self.wfile.flush()
-                    self.wfile.write(b"0\r\n\r\n")
-                    self.wfile.flush()
-                else:
-                    data = response.read()
-                    self.send_header("Content-Length", str(len(data)))
-                    self.end_headers()
-                    self.wfile.write(data)
-        except urllib.error.HTTPError as error:
-            data = error.read()
-            self.send_response(error.code)
-            self.send_header("Content-Type", error.headers.get("Content-Type", "application/json"))
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-        except Exception as error:  # noqa: BLE001
-            data = json.dumps({"error": {"message": f"fast-compact upstream error: {error}"}}).encode("utf-8")
-            self.send_response(502)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
+                    else:
+                        data = response.read()
+                        self.send_header("Content-Length", str(len(data)))
+                        self.end_headers()
+                        self.wfile.write(data)
+                return
+            except urllib.error.HTTPError as error:
+                data = error.read()
+                self.send_response(error.code)
+                self.send_header("Content-Type", error.headers.get("Content-Type", "application/json"))
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            except Exception as error:  # noqa: BLE001
+                # Il server era in riavvio: si aspetta che torni e si ritenta.
+                if attempt < 3 and not _server_health_ok():
+                    for _ in range(120):
+                        if _server_health_ok():
+                            break
+                        time.sleep(1.0)
+                    if _server_health_ok():
+                        continue
+                data = json.dumps({"error": {"message": f"fast-compact upstream error: {error}"}}).encode("utf-8")
+                self.send_response(502)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
 
 
 def main() -> None:
     server = ThreadingHTTPServer(("127.0.0.1", LISTEN), Handler)
     server.daemon_threads = True
+    threading.Thread(target=_rizzo_idle_watcher, daemon=True).start()
+    threading.Thread(target=_memory_guard, daemon=True).start()
+    atexit.register(_release_rizzo_if_ours)
     sys.stderr.write(f"fast-compact: ascolto su http://127.0.0.1:{LISTEN} -> {UPSTREAM}\n")
     sys.stderr.flush()
     server.serve_forever()
+
+
+def _release_rizzo_if_ours() -> None:
+    """Alla chiusura del proxy libera Rizzo solo se lo aveamo avviato noi."""
+    try:
+        if _rizzo_state.get("started_by_us"):
+            release_rizzo()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 if __name__ == "__main__":

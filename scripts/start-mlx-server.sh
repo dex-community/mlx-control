@@ -37,6 +37,28 @@ REP_PENALTY="$(read_setting repetition_penalty)"
 THINKING="$(read_setting enable_thinking)"
 MAX_TOKENS="$(read_setting max_tokens)"
 
+# --- Budget di memoria -------------------------------------------------
+# Il server MLX gira sulla memoria unificata: pesi + cache KV + cache dei
+# prompt condividono la RAM con il resto del sistema. I valori qui sotto
+# limitano quanto resta "appiccicato" al processo dopo una compattazione.
+#
+# prompt_cache_bytes : tetto massimo alle cache KV conservate tra le richieste.
+#                      3 GB (vecchio default) -> 512 MB: dopo la compattazione
+#                      il server non trattiene piu' il contesto completo.
+# prompt_cache_size  : quante cache di prompt tenere (8 -> 2).
+#
+# kv_bits            : quantizzazione della KV cache (4 o 8 bit). DISATTIVATO di
+#                      default: i modelli ibridi come LFM3 usano un
+#                      RotatingKVCache, per cui la quantizzazione non e'
+#                      implementata e la generazione va in crash
+#                      ("RotatingKVCache Quantization NYI"). Si lascia impostabile
+#                      per modelli con cache standard.
+PROMPT_CACHE_SIZE="$(read_setting prompt_cache_size)"
+PROMPT_CACHE_BYTES="$(read_setting prompt_cache_bytes)"
+KV_BITS="$(read_setting kv_bits)"
+KV_GROUP_SIZE="$(read_setting kv_group_size)"
+KV_START="$(read_setting quantized_kv_start)"
+
 export MLX_LM_MODEL_ALIASES="${MLX_LM_MODEL_ALIASES:-lfm3-1.7b-mlx}"
 
 # Alias aggiuntivi: "nome=percorso" espone un secondo modello (es. quello veloce
@@ -65,6 +87,24 @@ else
   THINK_ARGS='{"enable_thinking":false}'
 fi
 
+# Argomenti di memoria (opzionali: se vuoi tornare ai valori precedenti basta
+# mettere "null" nel model-settings.json o rimuovere le chiavi).
+MEM_ARGS=()
+case "${PROMPT_CACHE_SIZE:-2}" in
+  null|"") ;;
+  *) MEM_ARGS+=(--prompt-cache-size "$PROMPT_CACHE_SIZE") ;;
+esac
+case "${PROMPT_CACHE_BYTES:-536870912}" in
+  null|"") ;;
+  *) MEM_ARGS+=(--prompt-cache-bytes "$PROMPT_CACHE_BYTES") ;;
+esac
+case "${KV_BITS:-null}" in
+  null|"") ;;
+  *) MEM_ARGS+=(--kv-bits "$KV_BITS"
+                --kv-group-size "${KV_GROUP_SIZE:-64}"
+                --quantized-kv-start "${KV_START:-8192}") ;;
+esac
+
 exec "$SERVER" \
   --model "$MODEL" \
   --host 127.0.0.1 \
@@ -72,6 +112,5 @@ exec "$SERVER" \
   --trust-remote-code \
   --chat-template-args "$THINK_ARGS" \
   --max-tokens "${MAX_TOKENS:-8192}" \
-  --prompt-cache-size 8 \
-  --prompt-cache-bytes 3000000000 \
+  ${MEM_ARGS[@]+"${MEM_ARGS[@]}"} \
   --log-level INFO

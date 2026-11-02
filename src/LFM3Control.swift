@@ -15,18 +15,21 @@ final class Service: ObservableObject {
     let label: String
     let plist: String
     let healthURL: URL?
+    var statsURL: URL?
 
     @Published var isRunning = false
     @Published var isBusy = false
     @Published var lastError: String?
+    @Published var detail: String?
 
-    init(id: String, title: String, symbol: String, label: String, plist: String, healthURL: String?) {
+    init(id: String, title: String, symbol: String, label: String, plist: String, healthURL: String?, statsURL: String? = nil) {
         self.id = id
         self.title = title
         self.symbol = symbol
         self.label = label
         self.plist = plist
         self.healthURL = healthURL.flatMap(URL.init(string:))
+        self.statsURL = statsURL.flatMap(URL.init(string:))
     }
 
     func refresh() {
@@ -36,6 +39,24 @@ final class Service: ObservableObject {
         URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
             let alive = data != nil
             DispatchQueue.main.async { self?.isRunning = alive }
+        }.resume()
+        refreshDetail()
+    }
+
+    /// Dettaglio opzionale (per il server MLX: memoria occupata).
+    private func refreshDetail() {
+        guard let statsURL else { return }
+        var request = URLRequest(url: statsURL)
+        request.timeoutInterval = 3
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
+            guard let data,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let bytes = obj["mlx_process_bytes"] as? Int else {
+                DispatchQueue.main.async { self?.detail = nil }
+                return
+            }
+            let text = String(format: "%.1f GB", Double(bytes) / 1_073_741_824.0)
+            DispatchQueue.main.async { self?.detail = text }
         }.resume()
     }
 
@@ -57,6 +78,21 @@ final class Service: ObservableObject {
     func restart() { perform("restart") }
     func toggle() { isRunning ? stop() : start() }
 
+    /// Verifica se il servizio risponde (usato dopo l'avvio).
+    private func alive() -> Bool? {
+        guard let healthURL else { return nil }
+        var request = URLRequest(url: healthURL)
+        request.timeoutInterval = 2
+        var result: Bool? = nil
+        let semaphore = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: request) { data, _, _ in
+            result = data != nil
+            semaphore.signal()
+        }.resume()
+        _ = semaphore.wait(timeout: .now() + 3)
+        return result
+    }
+
     private func perform(_ action: String) {
         isBusy = true
         lastError = nil
@@ -67,7 +103,19 @@ final class Service: ObservableObject {
             case "start":
                 // bootout può fallire se il servizio non è caricato: va ignorato.
                 _ = self.launchctl(["bootout", "gui/\(uid)/\(self.label)"])
+                // Il job deve essere rimosso del tutto prima del bootstrap.
+                Thread.sleep(forTimeInterval: 1.0)
                 err = self.launchctl(["bootstrap", "gui/\(uid)", self.plist])
+                if err != nil {
+                    Thread.sleep(forTimeInterval: 1.5)
+                    err = self.launchctl(["bootstrap", "gui/\(uid)", self.plist])
+                }
+                // I servizi "on demand" (Rizzo Flow) non partono con RunAtLoad:
+                // in quel caso va avviato esplicitamente.
+                Thread.sleep(forTimeInterval: 1.5)
+                if self.alive() == false {
+                    _ = self.launchctl(["kickstart", "-k", "gui/\(uid)/\(self.label)"])
+                }
             case "stop":
                 err = self.launchctl(["bootout", "gui/\(uid)/\(self.label)"])
                 if let e = err, e.contains("Could not find service") { err = nil }
@@ -116,18 +164,21 @@ final class ModelSettings: ObservableObject {
     }
 
     func save() {
-        // Scrittura manuale: JSONSerialization serializza 0.1 come 0.10000000000000001.
-        let json = """
-        {
-          "temperature": \(String(format: "%.2f", temperature)),
-          "top_k": \(topK),
-          "min_p": \(String(format: "%.2f", minP)),
-          "repetition_penalty": \(String(format: "%.2f", repetitionPenalty)),
-          "enable_thinking": \(enableThinking),
-          "max_tokens": \(maxTokens)
+        // Si parte dal file esistente: le chiavi non gestite dalla UI (es. il
+        // budget di memoria: prompt_cache_bytes, kv_bits, ...) devono sopravvivere.
+        var obj: [String: Any] = [:]
+        if let data = FileManager.default.contents(atPath: Self.path),
+           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            obj = existing
         }
-        """
-        try? json.write(to: URL(fileURLWithPath: Self.path), atomically: true, encoding: .utf8)
+        obj["temperature"] = Double(String(format: "%.2f", temperature))
+        obj["top_k"] = topK
+        obj["min_p"] = Double(String(format: "%.2f", minP))
+        obj["repetition_penalty"] = Double(String(format: "%.2f", repetitionPenalty))
+        obj["enable_thinking"] = enableThinking
+        obj["max_tokens"] = maxTokens
+        guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]) else { return }
+        try? data.write(to: URL(fileURLWithPath: Self.path), options: .atomic)
     }
 
     /// Valori consigliati da Liquid per LFM3 1.7B.
@@ -156,7 +207,8 @@ final class AppState: ObservableObject {
         symbol: "cpu",
         label: "com.minimax.lfm3-mlx-server",
         plist: "\(home)/Library/LaunchAgents/com.minimax.lfm3-mlx-server.plist",
-        healthURL: "http://127.0.0.1:8080/health"
+        healthURL: "http://127.0.0.1:8080/health",
+        statsURL: "http://127.0.0.1:8081/memory"
     )
     let caveman = Service(
         id: "caveman",
@@ -391,7 +443,9 @@ final class AppState: ObservableObject {
                     self.compactionMode = Self.currentCompactionMode()
                     return
                 }
-                if !self.rizzo.isRunning { self.rizzo.start() }
+                // Rizzo Flow non viene avviato qui: in regime "on demand" lo
+                // avvia il proxy di compattazione quando serve e lo spegne
+                // dopo un periodo di inattivita' (risparmia ~2 GB di RAM).
                 self.fastCompact.start()
             }
             self.compactionMode = mode
@@ -488,7 +542,7 @@ private struct ServiceRow: View {
                 .foregroundStyle(service.isRunning ? Color.green : Color.secondary)
             VStack(alignment: .leading, spacing: 0) {
                 Text(service.title).font(.system(size: 12))
-                Text(service.isRunning ? "in esecuzione" : "spento")
+                Text(service.isRunning ? "in esecuzione" : (service.id == "rizzo" ? "pronto · si avvia da solo" : "spento"))
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
@@ -905,6 +959,11 @@ struct MenuContent: View {
                 Text(state.model.isRunning ? "127.0.0.1:8080 · attivo" : "127.0.0.1:8080 · spento")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
+                if let detail = state.model.detail {
+                    Text("memoria \(detail)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer(minLength: 0)
             if let busy = state.busyMessage {

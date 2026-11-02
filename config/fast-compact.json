@@ -3,5 +3,10 @@
   "level": "fast",
   "max_tokens": 1200,
   "tool_chars": 400,
-  "model": ""
+  "model": "",
+  "rizzo_autostart": true,
+  "rizzo_idle_seconds": 900,
+  "mlx_memory_guard": true,
+  "mlx_memory_threshold_bytes": 3500000000,
+  "mlx_memory_guard_idle_seconds": 90
 }

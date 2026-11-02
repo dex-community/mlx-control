@@ -354,6 +354,66 @@ PATCHES: list[tuple[str, str, str, str]] = [
         "before",
     ),
     (
+        "endpoint clear_cache",
+        "        if self.path not in request_factories:\n",
+        """        # MLX Control: rilascio dei buffer MLX non piu' usati.
+        if self.path.split("?")[0] == "/admin/clear-cache":
+            self.handle_clear_cache_request()
+            return
+
+""",
+        "before",
+    ),
+    (
+        "endpoint clear_cache GET",
+        "        if self.path.startswith(\"/v1/models\"):\n",
+        """        # MLX Control: rilascio dei buffer MLX anche su GET.
+        if self.path.split(\"?\")[0] == "/admin/clear-cache":
+            self.handle_clear_cache_request()
+            return
+
+""",
+        "before",
+    ),
+    (
+        "metodo clear_cache",
+        "    def handle_models_request(self):\n",
+        """    def handle_clear_cache_request(self):
+        \"\"\"Rilascia la cache di allocazione MLX (memoria unificata).
+
+        Dopo una compattazione il server tiene in memoria i buffer del
+        contesto elaborato: mx.clear_cache() li restituisce al sistema.
+        \"\"\"
+        try:
+            import mlx.core as mx
+
+            before = {
+                "active": mx.get_active_memory(),
+                "cache": mx.get_cache_memory(),
+                "peak": mx.get_peak_memory(),
+            }
+            mx.clear_cache()
+            payload = {
+                "cleared": True,
+                "active_before": before["active"],
+                "cache_before": before["cache"],
+                "peak_before": before["peak"],
+                "active_after": mx.get_active_memory(),
+                "cache_after": mx.get_cache_memory(),
+            }
+        except Exception as e:  # noqa: BLE001
+            logging.warning(f"clear_cache: fallito ({e})")
+            payload = {"cleared": False, "error": str(e)}
+
+        self._set_completion_headers(200)
+        self.end_headers()
+        self.wfile.write(json.dumps(payload).encode())
+        self.wfile.flush()
+
+""",
+        "before",
+    ),
+    (
         "rimozione <think>",
         '        choice = response["choices"][0]\n',
         """        # MLX Control: via i tag <think> residui dall'output.
