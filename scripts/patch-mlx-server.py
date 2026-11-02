@@ -183,6 +183,32 @@ def repair_tool_arguments(arguments, tool_name, tools):
 '''
 
 PATCHES: list[tuple[str, str, str, str]] = [
+    (
+        "attivita' generazioni",
+        "import warnings\n",
+        """import warnings
+
+# MLX Control: tracciamento delle generazioni in corso. Serve al proxy per
+# sapere se il server sta elaborando una richiesta (e quindi non riavviarlo
+# nel mezzo).
+_MLX_ACTIVITY = {"active": 0, "last_start": 0.0, "last_end": 0.0}
+""",
+        "after",
+    ),
+    (
+        "conteggio generazioni",
+        "        self.handle_completion(request, stop_words)\n",
+        """        # MLX Control: marca l'inizio e la fine della generazione.
+        _MLX_ACTIVITY["active"] += 1
+        _MLX_ACTIVITY["last_start"] = time.time()
+        try:
+            self.handle_completion(request, stop_words)
+        finally:
+            _MLX_ACTIVITY["active"] -= 1
+            _MLX_ACTIVITY["last_end"] = time.time()
+""",
+        "replace",
+    ),
     # (nome, ancora, testo, "after" | "replace")
     (
         "import os",
@@ -367,10 +393,47 @@ PATCHES: list[tuple[str, str, str, str]] = [
     (
         "endpoint clear_cache GET",
         "        if self.path.startswith(\"/v1/models\"):\n",
-        """        # MLX Control: rilascio dei buffer MLX anche su GET.
-        if self.path.split(\"?\")[0] == "/admin/clear-cache":
+        """        # MLX Control: statistiche di memoria (solo lettura) e rilascio cache.
+        _mlx_path = self.path.split(\"?\")[0]
+        if _mlx_path == "/admin/clear-cache":
             self.handle_clear_cache_request()
             return
+        if _mlx_path == "/admin/stats":
+            self.handle_stats_request()
+            return
+
+""",
+        "before",
+    ),
+    (
+        "metodo stats",
+        "    def handle_models_request(self):\n",
+        """    def handle_stats_request(self):
+        \"\"\"Statistiche di memoria MLX: solo lettura, nessun side effect.
+
+        Vanno usate per il monitoraggio: non chiamano mx.clear_cache, che non
+        deve girare mentre una generazione e' in corso.
+        \"\"\"
+        try:
+            import mlx.core as mx
+
+            payload = {
+                "active": mx.get_active_memory(),
+                "cache": mx.get_cache_memory(),
+                "peak": mx.get_peak_memory(),
+                "limit": mx.get_memory_limit(),
+                "generating": int(_MLX_ACTIVITY.get("active", 0)),
+                "last_start": float(_MLX_ACTIVITY.get("last_start", 0.0)),
+                "last_end": float(_MLX_ACTIVITY.get("last_end", 0.0)),
+            }
+        except Exception as e:  # noqa: BLE001
+            logging.warning(f"stats: non disponibili ({e})")
+            payload = {"error": str(e)}
+
+        self._set_completion_headers(200)
+        self.end_headers()
+        self.wfile.write(json.dumps(payload).encode())
+        self.wfile.flush()
 
 """,
         "before",

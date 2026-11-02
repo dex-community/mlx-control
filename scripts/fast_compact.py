@@ -222,14 +222,22 @@ def _server_health_ok(timeout: float = 5.0) -> bool:
         return False
 
 
+def mlx_stats() -> dict[str, Any]:
+    """Statistiche del server MLX (solo lettura: nessun mx.clear_cache).
+
+    /admin/stats non ha effetti collaterali, a differenza di /admin/clear-cache:
+    va bene chiamarlo anche mentre il server sta elaborando una richiesta.
+    """
+    try:
+        with urllib.request.urlopen(f"{UPSTREAM}/admin/stats", timeout=20) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def mlx_memory_bytes() -> int:
     """Memoria attiva del server MLX (buffer vivi, non cache)."""
-    try:
-        with urllib.request.urlopen(f"{UPSTREAM}/admin/clear-cache", timeout=20) as response:
-            data = json.loads(response.read().decode("utf-8"))
-        return int(data.get("active_after") or data.get("active_before") or 0)
-    except Exception:  # noqa: BLE001
-        return 0
+    return int(mlx_stats().get("active") or 0)
 
 
 def process_memory_bytes() -> int:
@@ -297,9 +305,27 @@ def _memory_guard() -> None:
                 busy = _inflight > 0
             if busy or (time.time() - _last_request_end) < idle_limit:
                 continue
-            used = max(mlx_memory_bytes(), process_memory_bytes())
-            if used and used > threshold:
-                restart_mlx_server()
+            stats = mlx_stats()
+            used = max(int(stats.get("active") or 0), process_memory_bytes())
+            if not used or used <= threshold:
+                continue
+            # Non si riavvia mai mentre il server sta elaborando una richiesta:
+            # il contatore del server e' la fonte di verita' (il traffico puo'
+            # arrivare anche da altri proxy, es. quello Caveman).
+            generating = int(stats.get("generating") or 0)
+            last_end = float(stats.get("last_end") or 0.0)
+            if generating > 0:
+                continue
+            if last_end and (time.time() - last_end) < idle_limit:
+                continue
+            with _inflight_lock:
+                if _inflight > 0 or (time.time() - _last_request_end) < idle_limit:
+                    continue
+            sys.stderr.write(
+                f"memory-guard: server MLX a {used / 2**30:.2f} GB, riavvio\n"
+            )
+            sys.stderr.flush()
+            restart_mlx_server()
         except Exception:  # noqa: BLE001
             continue
 

@@ -195,16 +195,18 @@ MLX Control lo tiene sotto controllo in tre modi:
    Rizzo Flow compare come "pronto · si avvia da solo".
 
 3. **Memory guard**: dopo una compattazione MLX continua a tenere i buffer del contesto elaborato
-   (per restituire la memoria al sistema serve riavviarlo). Il proxy — che è il punto di passaggio
-   obbligato di MiniMax Code — riavvia il server MLX **solo quando non ci sono richieste in volo** e
-   la memoria supera la soglia (3,5 GB per default). Le richieste che arrivano durante il riavvio
-   vengono trattenute e ritentate.
+   (per restituire la memoria al sistema serve riavviarlo). Il proxy riavvia il server MLX **solo
+   quando è davvero inattivo** e la memoria supera la soglia (3,5 GB per default).
 
-   Il server espone anche `GET /admin/clear-cache`, che chiama `mx.clear_cache()`:
+   Il stato di attività viene letto **dal server stesso** (`GET /admin/stats` → `generating`), non
+   dal proxy: il traffico può arrivare anche da altri client (per esempio il proxy Caveman, che
+   inoltra direttamente a `:8080`), e riavviare il server mentre una generazione è in corso
+   interromperebbe la risposta del modello.
 
    ```bash
-   curl -s http://127.0.0.1:8080/admin/clear-cache
-   curl -s http://127.0.0.1:8081/memory   # memoria del server MLX in byte
+   curl -s http://127.0.0.1:8080/admin/stats       # solo lettura: memoria + generazioni in corso
+   curl -s http://127.0.0.1:8080/admin/clear-cache  # mx.clear_cache()
+   curl -s http://127.0.0.1:8081/memory             # memoria del server MLX in byte
    ```
 
 Misure reali su questo Mac (16 GB, LFM3-1.7B-MLX-4bit):
