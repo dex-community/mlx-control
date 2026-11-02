@@ -5,7 +5,7 @@ set -euo pipefail
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_NAME="MLX Control"
 APP="/Applications/${APP_NAME}.app"
-VERSION="${VERSION:-2.0.0}"
+VERSION="${VERSION:-2.0.2}"
 
 if ! command -v swiftc >/dev/null 2>&1; then
   echo "ERR: swiftc non trovato. Installa gli Xcode Command Line Tools (xcode-select --install)."
