@@ -16,7 +16,26 @@ LABEL="com.minimax.fast-compact"
 PLIST="${HOME_DIR}/Library/LaunchAgents/${LABEL}.plist"
 URL="http://127.0.0.1:8081/health"
 SCRIPT="${INSTALL_DIR}/fast_compact.py"
-PYTHON_BIN="${MINIMAX_PYTHON:-/usr/bin/python3}"
+# Python adatto: preferisce l'ambiente del server MLX (3.12), altrimenti il
+# primo interprete >= 3.10 trovato nel PATH.
+pick_python() {
+  for candidate in \
+    "$INSTALL_DIR/mlxenv/bin/python" \
+    "$(command -v python3.13 2>/dev/null)" \
+    "$(command -v python3.12 2>/dev/null)" \
+    "$(command -v python3.11 2>/dev/null)" \
+    "$(command -v python3.10 2>/dev/null)" \
+    "$(command -v python3 2>/dev/null)"
+  do
+    if [ -n "$candidate" ] && [ -x "$candidate" ] && \
+       "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)' 2>/dev/null; then
+      echo "$candidate"
+      return
+    fi
+  done
+  echo /usr/bin/python3
+}
+PYTHON_BIN="${MINIMAX_PYTHON:-$(pick_python)}"
 
 mkdir -p "$LOG_DIR" "$STATE_DIR" "$HOME_DIR/Library/LaunchAgents"
 

@@ -210,7 +210,8 @@ def _compact_call(call: ToolCall) -> str:
     parts = []
     for key, value in call.input.items():
         text = value if isinstance(value, str) else _input_text({key: value}, 200)
-        parts.append(f"{key}={re.sub(r'\\s+', ' ', text)}")
+        flat = _WHITESPACE.sub(" ", text)
+        parts.append(f"{key}={flat}")
     joined = " ".join(parts)
     return f"{call.id} {call.tool} {truncate(joined, INPUT_CHARS[2])} → {'error' if call.is_error else 'ok'} {call.result_chars}ch"
 
@@ -562,6 +563,8 @@ class CompactionResult:
 # ---------------------------------------------------------------------------
 # Checkpoint deterministico (modalità "solo Rizzo": zero generazione)
 # ---------------------------------------------------------------------------
+
+_WHITESPACE = re.compile(r"\s+")
 
 DECISION_HINTS = (
     "decido", "scelgo", "deciso", "invece", "scegliamo", "optiamo", "adottiamo",

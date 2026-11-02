@@ -214,42 +214,6 @@ cat > "$AGENTS/com.minimax.lfm3-mlx-server.plist" <<PLIST
 </plist>
 PLIST
 
-cat > "$AGENTS/com.minimax.fast-compact.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.minimax.fast-compact</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>${PYTHON_BIN:-/usr/bin/python3}</string>
-    <string>${INSTALL_DIR}/fast_compact.py</string>
-  </array>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>WorkingDirectory</key>
-  <string>${INSTALL_DIR}</string>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>FASTCOMPACT_UPSTREAM</key><string>http://127.0.0.1:8080</string>
-    <key>FASTCOMPACT_LISTEN</key><string>8081</string>
-    <key>FASTCOMPACT_RIZZO</key><string>http://127.0.0.1:8017</string>
-    <key>FASTCOMPACT_CONFIG</key><string>${INSTALL_DIR}/fast-compact.json</string>
-    <key>FASTCOMPACT_STATE</key><string>${CONTROL_DIR}/state/last-compaction.json</string>
-  </dict>
-  <key>StandardOutPath</key>
-  <string>${CONTROL_DIR}/logs/fast-compact.log</string>
-  <key>StandardErrorPath</key>
-  <string>${CONTROL_DIR}/logs/fast-compact.error.log</string>
-  <key>ProcessType</key>
-  <string>Interactive</string>
-</dict>
-</plist>
-PLIST
-
 cat > "$AGENTS/com.minimax.lfm3control.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
