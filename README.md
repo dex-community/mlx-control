@@ -13,9 +13,13 @@ LM Studio, che spesso dà problemi.
 
 ## Funzionalità
 
+- **Pannello personalizzato** (non un menu nativo): etichette, controlli, pulsanti
+  e opzioni **tutti allineati a sinistra**
 - **Accendi / spegni** il server MLX e il proxy Caveman con un click
-- **Parametri del modello** applicati immediatamente: temperatura, top-k,
+- **Parametri del modello** applicati immediatamente: temperatura, top-k, min-p,
   repetition penalty, max output tokens, thinking on/off
+- **Valori consigliati** con un click (temperature 0.1, top-k 50, repetition 1.1,
+  thinking off)
 - **Finestra di contesto** (32K → 256K) con allineamento automatico delle
   sessioni già aperte
 - **Avvio automatico al login** via LaunchAgent, con riavvio se il server muore
@@ -39,6 +43,11 @@ git clone https://github.com/dex-community/lfm3-mlx-control.git
 cd lfm3-mlx-control
 ./install.sh
 ```
+
+Solo la Menu Bar Extra si può scaricare anche come asset della
+[release v1.1.1](https://github.com/dex-community/lfm3-mlx-control/releases/tag/v1.1.1)
+(`LFM3Control-1.1.1.zip`): estrai in `/Applications` e rinomina la cartella in
+`LFM3 Control.app`.
 
 `install.sh` copia gli script in `~/.minimax/local-models`, registra i
 LaunchAgent, compila la Menu Bar Extra in `/Applications/LFM3 Control.app` e
