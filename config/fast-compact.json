@@ -1,0 +1,7 @@
+{
+  "mode": "native",
+  "level": "fast",
+  "max_tokens": 1200,
+  "tool_chars": 400,
+  "model": ""
+}

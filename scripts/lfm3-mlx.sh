@@ -2,9 +2,11 @@
 # Gestione dello stack MLX locale per MiniMax Code.
 #   start | stop | restart | status | logs | test | set-context N | fix-sessions
 LABEL="com.minimax.lfm3-mlx-server"
-PLIST="/Users/io/Library/LaunchAgents/${LABEL}.plist"
-MODEL="${LFM3_MODEL_PATH:-/Users/io/.lmstudio/models/LiquidAI/LFM3-1.7B-MLX-4bit}"
-BASE="${LFM3_INSTALL_DIR:-/Users/io/.minimax/local-models}"
+HOME_DIR="${HOME:-$(echo ~)}"
+PLIST="${HOME_DIR}/Library/LaunchAgents/${LABEL}.plist"
+CONTROL_DIR="${MLX_CONTROL_DIR:-${HOME_DIR}/.mlxControl}"
+MODEL="${LFM3_MODEL_PATH:-${CONTROL_DIR}/models/LiquidAI/LFM3-1.7B-MLX-4bit}"
+BASE="${LFM3_INSTALL_DIR:-${HOME_DIR}/.minimax/local-models}"
 URL="http://127.0.0.1:8080"
 
 case "$1" in

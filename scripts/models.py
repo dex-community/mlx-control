@@ -15,8 +15,10 @@ import subprocess
 import sys
 
 HOME = os.path.expanduser("~")
-MODELS_ROOT = os.path.join(HOME, ".lmstudio", "models")
-INSTALL_DIR = os.path.join(HOME, ".minimax", "local-models")
+# Tutti i percorsi sono dinamici: l'installazione vive nella home dell'utente.
+CONTROL_DIR = os.environ.get("MLX_CONTROL_DIR") or os.path.join(HOME, ".mlxControl")
+MODELS_ROOT = os.path.join(CONTROL_DIR, "models")
+INSTALL_DIR = os.environ.get("LFM3_INSTALL_DIR") or os.path.join(HOME, ".minimax", "local-models")
 ACTIVE_FILE = os.path.join(INSTALL_DIR, "current-model.txt")
 VENV_PY = os.path.join(INSTALL_DIR, "mlxenv", "bin", "python")
 HF_API = "https://huggingface.co/api/models"
@@ -128,7 +130,7 @@ def list_remote(query: str = "") -> list:
 
 
 def download(repo_id: str) -> None:
-    """Scarica un repo Hugging Face in ~/.lmstudio/models/<org>/<nome>."""
+    """Scarica un repo Hugging Face in ~/.mlxControl/models/<org>/<nome>."""
     if "/" not in repo_id:
         raise SystemExit(f"ERR: id Hugging Face non valido: {repo_id}")
     org, name = repo_id.split("/", 1)

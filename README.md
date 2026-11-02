@@ -1,80 +1,81 @@
-# LFM3 MLX Control
+# MLX Control
 
-Menu bar extra per macOS che accende, spegne e configura un **server MLX locale**
-(OpenAI-compatible) che può essere usato come provider custom in **MiniMax Code**
-o in qualsiasi client OpenAI-compatible.
+<img src="docs/screenshot-menu.png" width="360" alt="Pannello di MLX Control">
 
-Nato per far girare **LFM3-1.7B-MLX-4bit** (Liquid AI) su Apple Silicon senza
-LM Studio, che spesso dà problemi.
+**Menu Bar Extra per macOS che rende MiniMax Code usabile con un modello locale.**
 
-<p align="center">
-  <img src="docs/screenshot-menu.png" alt="Pannello" width="320">
-  <img src="docs/screenshot-download.png" alt="Catalogo Hugging Face" width="320">
-</p>
+MLX Control installa e governa uno stack completo e **tutto locale**:
 
-## Funzionalità
+- un **server MLX** (Apple Silicon) che espone LFM3 e altri modelli MLX con API OpenAI-compatible;
+- la registrazione del provider `mlx` dentro **MiniMax Code**, così il modello locale diventa un
+  provider custom selezionabile come qualsiasi altro;
+- una **compattazione del contesto** alternativa, basata su [Rizzo Flow](https://github.com/Rizzo-AI-Academy/rizzo-flow),
+  che rende la "Compacting context" da minuti a pochi secondi;
+- una **Menu Bar Extra** per accendere/spegnere, cambiare modello e parametri, e installare i modelli
+  con un clic.
 
-- **Pannello personalizzato** (non un menu nativo): etichette, controlli, pulsanti
-  e opzioni **tutti allineati a sinistra**
-- **Accendi / spegni** il server MLX e il proxy Caveman con un click (interruttore ON/OFF)
-- **Scarica modelli MLX da Hugging Face** direttamente dal pannello, con ricerca,
-  filtri rapidi e barra di progresso (sezione inline: si apre e si chiude subito)
-- **Modello attivo** selezionabile tra quelli installati (formato LM Studio:
-  `~/.lmstudio/models/<org>/<nome>`)
-- **Agente predefinito** MiniMax M3.1 Flash oppure LFM3 locale, con un click
-- **Esci** / **Esci e spegni il modello** (l'app non si riavvia da sola)
-- **Parametri del modello** applicati immediatamente: temperatura, top-k, min-p,
-  repetition penalty, max output tokens, thinking on/off
-- **Valori consigliati** con un click (temperature 0.1, top-k 50, repetition 1.1,
-  thinking off)
-- **Finestra di contesto** (32K → 256K) con allineamento automatico delle
-  sessioni già aperte
-- **Avvio automatico al login** via LaunchAgent, con riavvio se il server muore
-- **Nessuna finestra**: icona nella barra dei menu, `LSUIElement`
+Nessun dato esce dal computer: modello, compattazione e cache restano sulla macchina.
+
+---
+
+## Indice
+
+- [Requisiti](#requisiti)
+- [Installazione](#installazione)
+- [Come funziona](#come-funziona)
+- [Compattazione del contesto](#compattazione-del-contesto)
+- [La Menu Bar Extra](#la-menu-bar-extra)
+- [Comandi da terminale](#comandi-da-terminale)
+- [Dove stanno i file](#dove-stanno-i-file)
+- [Configurazione di MiniMax Code](#configurazione-di-minimax-code)
+- [Problemi frequenti](#problemi-frequenti)
+- [Sviluppo](#sviluppo)
+- [Licenza](#licenza)
+
+---
 
 ## Requisiti
 
-- macOS 13+ su Apple Silicon
-- Xcode Command Line Tools (`xcode-select --install`)
-- Python 3.12 con `mlx-lm` installato (vedi *Installazione del server*)
-- Un modello MLX compatibile (es. `LiquidAI/LFM3-1.7B-MLX-4bit`)
+| | |
+|---|---|
+| macOS | 13.0 o successivo, Apple Silicon (M1+) |
+| MiniMax Code | installato e avviato almeno una volta |
+| Spazio | ~1,2 GB per LFM3-1.7B-4bit, ~1,8 GB per Rizzo Flow |
+| Tool di sistema | Xcode Command Line Tools (`xcode-select --install`) |
 
-> **Nota su LFM3**: a lungo `mlx-lm` non ha supportato l'architettura `lfm3`.
-> Il server qui sotto usa la branch della PR
-> [mlx-lm#2016 "Add LFM3 Support"](https://github.com/ml-explore/mlx-lm/pull/2016).
+L'installer si occupa di installare da solo **Homebrew**, **Python 3.11+** e **uv** se mancano.
+Se Homebrew non è installato e l'installazione automatica fallisce (serve la password di
+amministratore), l'installer stampa il comando da eseguire a mano.
 
-## Installazione rapida
+## Installazione
 
 ```bash
-git clone https://github.com/dex-community/lfm3-mlx-control.git
-cd lfm3-mlx-control
+git clone https://github.com/dex-community/mlx-control.git
+cd mlx-control
 ./install.sh
 ```
 
-Solo la Menu Bar Extra si può scaricare anche come asset della
-[release v1.1.1](https://github.com/dex-community/lfm3-mlx-control/releases/tag/v1.1.1)
-(`LFM3Control-1.1.1.zip`): estrai in `/Applications` e rinomina la cartella in
-`LFM3 Control.app`.
+L'installer, in ordine:
 
-`install.sh` copia gli script in `~/.minimax/local-models`, registra i
-LaunchAgent, compila la Menu Bar Extra in `/Applications/LFM3 Control.app` e
-avvia tutto.
+1. controlla Homebrew, Xcode Command Line Tools, Python 3.11+ e `uv`, installando quello che manca;
+2. crea gli ambienti Python (server MLX con `mlx-lm`, Rizzo Flow con `uv`);
+3. scarica il modello **LFM3-1.7B-MLX-4bit** in `~/.mlxControl/models`;
+4. scrive i LaunchAgent (server MLX, Rizzo Flow, proxy di compattazione, pannello);
+5. registra il provider `mlx` in `~/.minimax/config.yaml` e imposta il modello predefinito;
+6. compila e installa la Menu Bar Extra in `/Applications/MLX Control.app` con la sua icona.
 
-### Installazione del server MLX
+Opzioni:
 
 ```bash
-uv venv --python 3.12 ~/.minimax/local-models/mlxenv
-VIRTUAL_ENV=~/.minimax/local-models/mlxenv \
-  uv pip install "git+https://github.com/ml-explore/mlx-lm@refs/pull/2016/head"
-VIRTUAL_ENV=~/.minimax/local-models/mlxenv uv pip install fastapi uvicorn
+./install.sh --no-rizzo     # salta Rizzo Flow (resta la compattazione nativa)
+./install.sh --no-model     # non scarica il modello MLX
+./install.sh --skip-deps    # non tocca Homebrew/Python/uv
 ```
 
-Il modello si scarica a mano in `~/.lmstudio/models/LiquidAI/LFM3-1.7B-MLX-4bit`
-(oppure con `huggingface-cli download LiquidAI/LFM3-1.7B-MLX-4bit`).
+## Come funziona
 
-## Configurazione in MiniMax Code
-
-In `~/.minimax/config.yaml`:
+MiniMax Code parla con i provider tramite la configurazione in `~/.minimax/config.yaml`.
+MLX Control aggiunge un provider custom OpenAI-compatible:
 
 ```yaml
 custom_provider:
@@ -90,158 +91,187 @@ custom_provider:
     models:
       lfm3-1.7b-mlx:
         name: LFM3-1.7B-MLX-4bit (locale)
-        enabled: true
         tool_call: true
-        modalities:
-          input: [text]
-          output: [text]
         limit:
           context: 262144
           output: 8192
-defaultModel: custom_provider:mlx/lfm3-1.7b-mlx
 ```
 
-## Note sull'implementazione del pannello
+Con il provider registrato, `LFM3-1.7B-MLX-4bit` compare nella lista dei modelli di MiniMax Code
+e può essere scelto come **modello predefinito** dal pannello ("Agente predefinito → LFM3 locale").
 
-Il pannello è una `MenuBarExtra` con `.menuBarExtraStyle(.window)` (il menu nativo
-imporrebbe sottomenu e righe a tutta larghezza) e **osserva direttamente** il
-`ModelStore`: se il pannello osservasse solo `AppState`, le variazioni di
-`showDownloader` non propagherebbero e la sezione comparirebbe solo alla riapertura.
+> Il supporto LFM3 in `mlx-lm` arriva dalla PR [#2016](https://github.com/ml-explore/mlx-lm/pull/2016),
+> non ancoramerged: l'installer la installa direttamente da GitHub.
 
-Il catalogo è una sezione inline e non uno `sheet`: nei pannelli della barra dei menu
-la presentazione modale viene rimandata e lo stato risulta "congelato" fino a
-chiudere e riaprire il pannello. Anche lo `ScrollView` è stato sostituito da una
-lista semplice (i pannelli MenuBar non gestiscono bene lo scroll), con i primi 6
-modelli e filtri rapidi per famiglia.
+Il server MLX è avviato da un LaunchAgent e riparte da solo se muore. Il pannello lo riavvia
+automaticamente se all'avvio non risponde.
 
-## Comandi (modelli)
+## Compattazione del contesto
+
+Quando il contesto si riempie, MiniMax Code chiede al **modello di sessione** di riscrivere la
+conversazione in un checkpoint. Con un modello locale da 1,7B l'operazione è lentissima: la
+richiesta contiene l'intera conversazione (oltre 100.000 caratteri) e il modello deve generare
+fino a 8.192 token.
+
+MLX Control offre tre modalità, selezionabili dal pannello:
+
+| Modalità | Come funziona | Velocità (conversazione da 57 messaggi, 113.000 caratteri) |
+|---|---|---|
+| **Nativa MiniMax** | il checkpoint lo scrive il modello di sessione | **80,5 s** (1.398 token generati) |
+| **Rizzo Flow** | Rizzo Flow decide in locale cosa scartare, il modello scrive un checkpoint breve | **15,4 s** |
+| **Rizzo senza LLM** | Rizzo Flow decide cosa tenere, il checkpoint è composto senza generare nulla | **8,9 s** (0 token) |
+
+Come è fatto:
+
+1. il proxy (`fast_compact.py`) intercetta la richiesta di checkpoint riconoscendo il marcatore
+   `Checkpoint control: summarize the preceding conversation now` e la passa al modello solo dopo
+   averla ridotta;
+2. **Rizzo Flow** (`http://127.0.0.1:8017`, API Jev-compatibile `POST /v1/systemone`) risponde a
+   domande chiuse "questa unità di messaggi serve ancora?" con una **probabilità**, senza generare
+   un solo token;
+3. i messaggi superflui vengono eliminati (a coppie: una `tool_call` e il suo `tool_result` se
+   ne vanno insieme), gli output dei tool superstiti vengono troncati;
+4. a questo punto il modello riceve un input molto più piccolo e genera un checkpoint breve;
+   nella modalità "senza LLM" il checkpoint a otto sezioni viene composto direttamente.
+
+L'algoritmo di selezione è un porting in Python di
+[`fast-jev-compaction`](https://github.com/tamaratran/fast-jev-compaction) (MIT), con l'endpoint
+Jev-compatibile di Rizzo Flow al posto dell'API cloud TypeSafe: **nessuna chiave esterna**.
+
+Dettagli:
 
 ```bash
-# modelli installati
+# configurazione attuale del proxy
+cat ~/.minimax/local-models/fast-compact.json
+
+# statistiche dell'ultima compattazione
+cat ~/.mlxControl/state/last-compaction.json
+```
+
+| chiave | significato |
+|---|---|
+| `mode` | `native`, `rizzo` o `rizzo-only` |
+| `level` | `fast` (decisioni per unità di messaggi) o `deep` (decisioni per singola tool call) |
+| `max_tokens` | tetto di token del checkpoint |
+| `tool_chars` | caratteri tenuti per output di tool |
+| `model` | alias del modello da usare per il checkpoint (vuoto = modello di sessione) |
+
+## La Menu Bar Extra
+
+![Pannello](docs/screenshot-menu.png)
+
+Dalla barra dei menu:
+
+- **Servizi** — accendi/spegni modello, proxy Caveman, Rizzo Flow e compattazione veloce;
+- **Modello** — modello attivo e catalogo Hugging Face con ricerca e download integrato;
+- **Agente predefinito** — scegli se l'agente usa il modello locale o MiniMax M3.1 Flash;
+- **Compressione del contesto** — Nativa / Rizzo Flow / Rizzo senza LLM, con installazione di Rizzo
+  Flow e statistiche dell'ultima compattazione;
+- **Parametri modello** — temperature, top-k, min-p, repetition penalty, max output token, thinking;
+- **Finestra di contesto** — da 32K a 256K (input + output), con riallineamento delle sessioni aperte;
+- **Consigliati / Riavvia / Apri log / Apri cartella / Esci**.
+
+Ogni parametro si applica subito: il pannello salva il file di configurazione e riavvia il server.
+
+## Comandi da terminale
+
+```bash
+~/.minimax/local-models/lfm3-mlx.sh status      # stato del server MLX
+~/.minimax/local-models/lfm3-mlx.sh restart     # riavvio
+~/.minimax/local-models/lfm3-mlx.sh test        # richiesta di prova
+~/.minimax/local-models/lfm3-mlx.sh set-context 262144
+~/.minimax/local-models/lfm3-mlx.sh fix-sessions
+
+~/.minimax/local-models/scripts/rizzo-flow.sh install|start|stop|status|logs
+~/.minimax/local-models/scripts/fast-compact.sh start|stop|restart|status|logs
+
 ~/.minimax/local-models/scripts/models.py list-installed
-# catalogo MLX su Hugging Face
-~/.minimax/local-models/scripts/models.py list-remote "qwen"
-# download (stampa righe JSON di progresso)
+~/.minimax/local-models/scripts/models.py list-remote
 ~/.minimax/local-models/scripts/models.py download mlx-community/Qwen2.5-0.5B-Instruct-4bit
-# modello servito dal server
-~/.minimax/local-models/scripts/models.py set-active ~/.lmstudio/models/LiquidAI/LFM3-1.7B-MLX-4bit
+~/.minimax/local-models/scripts/models.py set-active <percorso>
+
+~/.minimax/local-models/scripts/set-compression.py native|rizzo|rizzo-only
+~/.minimax/local-models/scripts/register-provider.py --default-model local
 ```
 
-## Hint di sistema e modelli piccoli
+## Dove stanno i file
 
-I modelli da 1-2B tendono a copiare nel contesto il percorso di un file allegato
-(es. `~/.minimax/v2/assets/...`) e a usarlo come directory di lavoro, causando
-comandi falliti a ripetizione. Il server può iniettare un hint di sistema
-automatico:
+Tutti i percorsi sono dinamici e vivono nella home dell'utente:
 
 ```
-MLX_SYSTEM_HINT="Working directory: usa SEMPRE percorsi relativi alla directory
-di lavoro corrente della sessione. Non usare mai come directory di lavoro i
-percorsi degli asset allegati, delle cache o di /tmp: sono file allegati, non
-il progetto. Se un comando fallisce, correggi il percorso invece di ripeterlo."
+~/.mlxControl/                 cartella nascosta dell'applicazione
+├── models/                    modelli MLX scaricati (es. LiquidAI/LFM3-1.7B-MLX-4bit)
+├── rizzo-flow/                clone di Rizzo Flow + pesi Spark-X2.5
+├── logs/                      log dei servizi
+└── state/                     statistiche dell'ultima compattazione
+
+~/.minimax/local-models/        script e configurazione del runtime
+├── mlxenv/                    ambiente Python con mlx-lm
+├── model-settings.json        parametri del modello
+├── fast-compact.json          configurazione del proxy di compattazione
+├── current-model.txt          modello attivo
+└── scripts/                   modelli.py, rizzo-flow.sh, set-compression.py, …
+
+~/Library/LaunchAgents/         com.minimax.lfm3-mlx-server, .rizzo-flow, .fast-compact, .lfm3control
+/Applications/MLX Control.app  la Menu Bar Extra
 ```
 
-Il valore di default è impostato da `scripts/start-mlx-server.sh` e può essere
-disattivato con `MLX_SYSTEM_HINT=""`.
+Le variabili d'ambiente `MLX_CONTROL_DIR` e `LFM3_INSTALL_DIR` permettono di spostare tutto altrove.
 
-## Comandi
+## Configurazione di MiniMax Code
+
+MiniMax Code conserva la configurazione in `~/.minimax/config.yaml`. MLX Control la modifica in
+modo chirurgico (backup automatico a ogni scrittura) e **non tocca mai le chiavi API** esistenti.
 
 ```bash
-~/.minimax/local-models/lfm3-mlx.sh status          # stato del server
-~/.minimax/local-models/lfm3-mlx.sh start|stop|restart
-~/.minimax/local-models/lfm3-mlx.sh test            # richiesta di prova
-~/.minimax/local-models/lfm3-mlx.sh set-context 131072
-~/.minimax/local-models/lfm3-mlx.sh fix-sessions     # allinea le sessioni aperte
-~/.minimax/local-models/lfm3-mlx.sh logs
+# provider locale + modello predefinito
+~/.minimax/local-models/scripts/register-provider.py --default-model local
+
+# compattazione veloce
+~/.minimax/local-models/scripts/set-compression.py rizzo-only
 ```
 
-## Come funziona
+Dopo aver cambiato provider o modello predefinito **riavvia MiniMax Code**.
 
-```
-MiniMax Code ──▶ http://127.0.0.1:8080/v1 ──▶ mlx_lm.server ──▶ LFM3 MLX (Metal)
-                          ▲
-             start-mlx-server.sh  legge  model-settings.json
-```
+## Problemi frequenti
 
-`start-mlx-server.sh` è un wrapper: legge i parametri da
-`~/.minimax/local-models/model-settings.json` e li traduce in variabili
-d'ambiente per `mlx_lm.server`. Cambiare un parametro dalla menu bar scrive il
-file e riavvia il servizio.
+**Il modello non compare nella lista.** Riavvia MiniMax Code: la configurazione viene letta all'avvio.
+Verifica con `curl http://127.0.0.1:8080/v1/models`.
 
-## Note tecniche
+**La compattazione resta lenta.** Controlla che il proxy sia attivo
+(`~/.minimax/local-models/scripts/fast-compact.sh status`) e che la modalità sia `rizzo` o
+`rizzo-only` (`cat ~/.minimax/local-models/fast-compact.json`).
 
-### Contesto e compattazione
+**MiniMax Code non parte con il modello locale.** Il modello da 1,7B è pensato per task brevi: per
+sessioni lunghe conviene il modello cloud. Nel pannello: "Agente predefinito → MiniMax M3.1 Flash".
 
-MiniMax Code calcola per ogni modello:
+**Errore `model ... is unavailable in the current catalog`.** Il `defaultModel` punta a un modello
+non registrato: rilancia `register-provider.py --default-model local`.
 
-```
-providerInputLimit = min(floor(contextWindow * 0.95),
-                          contextWindow - 16384,
-                          contextWindow - output - 2048)
-```
+**`POST_ADMISSION_FAILED` durante la sessione.** La finestra di contesto della sessione è più vecchia
+di quella configurata: esegui `lfm3-mlx.sh fix-sessions` e riavvia MiniMax Code.
 
-e compatta automaticamente quando i token lo superano. Il prompt di base di un
-agente (system prompt + tool + skills) è di ~31.500 token: con
-`context: 32768` la soglia (16.384) viene superata e la richiesta viene
-**rifiutata in admission** (`POST_ADMISSION_FAILED`), con la compattazione che
-fallisce a cascata.
+## Sviluppo
 
-Da qui `limit.context: 262144` (input + output = 256K, il massimo dichiarato dal
-modello).
-
-**Il runtime congela `effectiveModelContextWindow` nei metadati della sessione
-alla creazione.** Una chat aperta prima della modifica continua a usare il
-vecchio limite: per questo `set-context` allinea anche le sessioni esistenti
-(backup del DB in `runtime-state.backup.sqlite`).
-
-### KV cache
-
-Il contesto non è limitato dalla RAM: LFM3 usa sliding window + cache rotante,
-quindi la KV cache resta piccola. Misure reali su 16 GB di RAM:
-
-| Prompt | Tempo | RSS totale |
-|---|---|---|
-| 30.017 token | 37 s | ~1,0 GB |
-| 120.017 token | 268 s | ~1,03 GB |
-
-La quantizzazione della KV cache (`--kv-bits 8`) **non** è supportata per
-LFM3: `mlx-lm` solleva `NotImplementedError: RotatingKVCache Quantization NYI`.
-
-### Parametri consigliati per LFM3 1.7B
-
-| Parametro | Valore | Motivo |
-|---|---|---|
-| `temperature` | 0.1 | a 0.0 il modello entra in loop di ragionamento |
-| `top_k` | 50 | impostazione ufficiale di Liquid |
-| `repetition_penalty` | 1.1 | indicata da Liquid per LFM3 |
-| `enable_thinking` | false | con il thinking attivo il modello scrive `<think>` e spesso non produce mai `content` |
-
-## Caveman (opzionale)
-
-[Caveman](https://github.com/JuliusBrussee/caveman) comprime localmente ciò che
-l'agente legge. Il proxy è un mount OpenAI-compatible:
-
-```yaml
-# ~/.caveman/caveman.yaml
-mode: compress
-compat:
-  mlx:
-    base_url: http://127.0.0.1:8080/v1
-    api_key_env: MLX_API_KEY
+```bash
+./build.sh                      # compila e installa la Menu Bar Extra
+swift tools/make-icon.swift build/LFM3Control.iconset   # rigenera l'icona
+python3 tools/make-screenshot.py                        # rigenera gli screenshot
 ```
 
-con `CAVE_SSRF_ALLOWLIST=127.0.0.1:8080`. Il provider in MiniMax Code punta
-alla porta 8787:
+Struttura:
 
 ```
-baseURL: http://127.0.0.1:8787/compat/mlx/v1
+src/LFM3Control.swift    pannello SwiftUI
+src/Models.swift         catalogo Hugging Face e download
+scripts/                 script di installazione e gestione
+config/                  default dei file di configurazione
+tools/                   icona e screenshot
+docs/                    immagini per il README
 ```
-
-Attenzione: in modalità `compress` il proxy sostituisce l'output dei tool con
-handle `<<ccr:...>>`, recuperabili solo via il server MCP `caveman`. Con modelli
-piccoli la qualità delle risposte peggiora: per questo il default di questo
-progetto è il provider diretto.
 
 ## Licenza
 
 MIT — vedi [LICENSE](LICENSE).
+
+I modelli scaricati (LFM3, Spark-X2.5) restano soggetti alle rispettive licenze.

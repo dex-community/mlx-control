@@ -145,6 +145,10 @@ final class ModelSettings: ObservableObject {
 final class AppState: ObservableObject {
     static let home = FileManager.default.homeDirectoryForCurrentUser.path
     static let installDir = "\(home)/.minimax/local-models"
+    static let controlDir: String = {
+        let env = ProcessInfo.processInfo.environment["MLX_CONTROL_DIR"]
+        return env ?? "\(home)/.mlxControl"
+    }()
 
     let model = Service(
         id: "model",
@@ -162,6 +166,22 @@ final class AppState: ObservableObject {
         plist: "\(home)/Library/LaunchAgents/com.minimax.caveman-proxy.plist",
         healthURL: "http://127.0.0.1:8787/health/live"
     )
+    let rizzo = Service(
+        id: "rizzo",
+        title: "Rizzo Flow",
+        symbol: "wand.and.stars",
+        label: "com.minimax.rizzo-flow",
+        plist: "\(home)/Library/LaunchAgents/com.minimax.rizzo-flow.plist",
+        healthURL: "http://127.0.0.1:8017/health"
+    )
+    let fastCompact = Service(
+        id: "fastcompact",
+        title: "Compattazione veloce",
+        symbol: "bolt.horizontal.circle",
+        label: "com.minimax.fast-compact",
+        plist: "\(home)/Library/LaunchAgents/com.minimax.fast-compact.plist",
+        healthURL: "http://127.0.0.1:8081/health"
+    )
     let settings = ModelSettings()
     var modelStore = ModelStore()
 
@@ -169,6 +189,11 @@ final class AppState: ObservableObject {
     @Published var defaultAgent: String = "locale"
     @Published var lastApplied: Date?
     @Published var busyMessage: String?
+    /// "native" | "rizzo" | "rizzo-only"
+    @Published var compactionMode: String = "native"
+    @Published var rizzoInstalled: Bool = false
+    @Published var lastCompaction: [String: Any]?
+    @Published var compressionMessage: String?
 
     private var timer: Timer?
 
@@ -194,6 +219,11 @@ final class AppState: ObservableObject {
     func refreshAll() {
         model.refresh()
         caveman.refresh()
+        rizzo.refresh()
+        fastCompact.refresh()
+        rizzoInstalled = Self.isRizzoInstalled()
+        compactionMode = Self.currentCompactionMode()
+        lastCompaction = Self.lastCompactionStats()
     }
 
     /// Rilegge i parametri da disco (per recepire modifiche esterne) all'apertura del menu.
@@ -318,6 +348,75 @@ final class AppState: ObservableObject {
     func openFolder() {
         NSWorkspace.shared.open(URL(fileURLWithPath: Self.installDir))
     }
+
+    // MARK: - Compressione del contesto
+
+    /// Rizzo Flow è installato se esiste l'eseguibile nella venv locale.
+    static func isRizzoInstalled() -> Bool {
+        FileManager.default.fileExists(atPath: "\(Self.controlDir)/rizzo-flow/.venv/bin/rizzo")
+    }
+
+    /// La modalità corrente è salvata nel file di configurazione del proxy.
+    static func currentCompactionMode() -> String {
+        let path = "\(Self.installDir)/fast-compact.json"
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let mode = obj["mode"] as? String else { return "native" }
+        return mode
+    }
+
+    static func lastCompactionStats() -> [String: Any]? {
+        let path = "\(Self.controlDir)/state/last-compaction.json"
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return obj
+    }
+
+    /// Applica la modalità di compattazione scelta e avvia/ferma i servizi necessari.
+    func setCompactionMode(_ mode: String) {
+        guard mode != compactionMode else { return }
+        compressionMessage = "Applicazione modalità…"
+        runScript("\(Self.installDir)/scripts/set-compression.py", arguments: [mode]) { [weak self] status, output in
+            guard let self = self else { return }
+            if status != 0 {
+                self.compressionMessage = "Errore: \(output.trimmingCharacters(in: .whitespacesAndNewlines))"
+                self.compactionMode = Self.currentCompactionMode()
+                return
+            }
+            if mode == "native" {
+                self.fastCompact.stop()
+            } else {
+                if !self.rizzoInstalled {
+                    self.compressionMessage = "Rizzo Flow non è installato: usa «Installa Rizzo Flow»."
+                    self.compactionMode = Self.currentCompactionMode()
+                    return
+                }
+                if !self.rizzo.isRunning { self.rizzo.start() }
+                self.fastCompact.start()
+            }
+            self.compactionMode = mode
+            self.compressionMessage = "Fatto: riavvia MiniMax Code per applicarla."
+        }
+    }
+
+    /// Installa Rizzo Flow (clone + ambiente Python + modello) con un solo clic.
+    func installRizzo() {
+        compressionMessage = "Installazione di Rizzo Flow in corso… (~1,8 GB, qualche minuto)"
+        runScript("\(Self.installDir)/scripts/rizzo-flow.sh", arguments: ["install"]) { [weak self] status, output in
+            guard let self = self else { return }
+            self.rizzoInstalled = Self.isRizzoInstalled()
+            if status == 0 {
+                self.compressionMessage = "Rizzo Flow installato e avviato."
+                self.rizzo.refresh()
+            } else {
+                self.compressionMessage = "Installazione non riuscita: \(output.suffix(160))"
+            }
+        }
+    }
+
+    func openRizzoPlayground() {
+        NSWorkspace.shared.open(URL(string: "http://127.0.0.1:8017/playground")!)
+    }
 }
 
 // MARK: - Interfaccia (pannello)
@@ -326,6 +425,7 @@ private struct ValuePicker<T: Hashable>: View {
     @Binding var selection: T
     let options: [T]
     let label: (T) -> String
+    var width: CGFloat = 96
 
     var body: some View {
         Picker("", selection: $selection) {
@@ -334,7 +434,7 @@ private struct ValuePicker<T: Hashable>: View {
         .pickerStyle(.menu)
         .labelsHidden()
         .controlSize(.small)
-        .frame(width: 96, alignment: .leading)
+        .frame(width: width, alignment: .leading)
     }
 }
 
@@ -419,6 +519,33 @@ struct MenuContent: View {
         })
     }
 
+    /// Spiegazione della modalità di compattazione selezionata.
+    private func compressionHint(_ mode: String) -> String {
+        switch mode {
+        case "rizzo":
+            return "Rizzo Flow decide in locale quali risultati scartare, poi il modello scrive un checkpoint breve. Circa 3-6× più veloce della modalità nativa."
+        case "rizzo-only":
+            return "Rizzo Flow decide cosa tenere e il checkpoint viene composto senza generare nulla: è la modalità più veloce in assoluto."
+        default:
+            return "MiniMax Code scrive il checkpoint con il modello di sessione: è il metodo nativo, più lento sui modelli locali."
+        }
+    }
+
+    /// Riepilogo dell'ultima compattazione eseguita.
+    private func lastCompactionText(_ stats: [String: Any]) -> String {
+        var parts: [String] = []
+        if let elapsed = stats["elapsed"] as? Double {
+            parts.append(String(format: "ultima: %.1f s", elapsed))
+        }
+        if let reduction = stats["reduction"] as? Double {
+            parts.append(String(format: "input −%.0f%%", reduction * 100))
+        }
+        if let generated = stats["generated"] as? Bool {
+            parts.append(generated ? "con generazione" : "senza generazione")
+        }
+        return parts.isEmpty ? "ultima compattazione: nessun dato" : parts.joined(separator: " · ")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             header
@@ -429,6 +556,8 @@ struct MenuContent: View {
                 SectionLabel(text: "Servizi")
                 ServiceRow(service: state.model)
                 ServiceRow(service: state.caveman)
+                ServiceRow(service: state.rizzo)
+                ServiceRow(service: state.fastCompact)
             }
 
             Divider()
@@ -496,6 +625,62 @@ struct MenuContent: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 5) {
+                SectionLabel(text: "Compressione del contesto")
+                paramRow("Modalità") {
+                    ValuePicker(
+                        selection: Binding(
+                            get: { state.compactionMode },
+                            set: { state.setCompactionMode($0) }
+                        ),
+                        options: ["native", "rizzo", "rizzo-only"],
+                        label: { mode in
+                            switch mode {
+                            case "rizzo": return "Rizzo + LLM"
+                            case "rizzo-only": return "Solo Rizzo"
+                            default: return "Nativa MiniMax"
+                            }
+                        },
+                        width: 150
+                    )
+                }
+                Text(compressionHint(state.compactionMode))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 6) {
+                    Button {
+                        state.installRizzo()
+                    } label: {
+                        Text(state.rizzoInstalled ? "Reinstalla Rizzo Flow" : "Installa Rizzo Flow")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button {
+                        state.openRizzoPlayground()
+                    } label: {
+                        Text("Playground").font(.system(size: 11))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(!state.rizzo.isRunning)
+
+                    Spacer(minLength: 0)
+                }
+
+                if let message = state.compressionMessage {
+                    Text(message).font(.system(size: 10)).foregroundStyle(.tertiary)
+                }
+                if let stats = state.lastCompaction {
+                    Text(lastCompactionText(stats)).font(.system(size: 10)).foregroundStyle(.tertiary)
+                }
             }
 
             Divider()
@@ -658,6 +843,15 @@ struct MenuContent: View {
         .padding(.top, 2)
     }
 
+    /// Nome del modello attivo (dal catalogo installato).
+    private var activeModelName: String {
+        if let model = store.installed.first(where: { $0.path == store.activePath }) {
+            return model.name
+        }
+        let path = store.activePath as NSString
+        return path.lastPathComponent.isEmpty ? "MLX Control" : path.lastPathComponent
+    }
+
     private var header: some View {
         HStack(spacing: 9) {
             ZStack {
@@ -669,7 +863,7 @@ struct MenuContent: View {
                     .foregroundStyle(state.model.isRunning ? Color.green : Color.secondary)
             }
             VStack(alignment: .leading, spacing: 1) {
-                Text("LFM3 1.7B · MLX")
+                Text(activeModelName)
                     .font(.system(size: 13, weight: .semibold))
                 Text(state.model.isRunning ? "127.0.0.1:8080 · attivo" : "127.0.0.1:8080 · spento")
                     .font(.system(size: 10))
