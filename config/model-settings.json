@@ -1,0 +1,8 @@
+{
+  "temperature": 0.1,
+  "top_k": 50,
+  "min_p": 0.0,
+  "repetition_penalty": 1.1,
+  "enable_thinking": false,
+  "max_tokens": 8192
+}

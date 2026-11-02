@@ -1,0 +1,8 @@
+.DS_Store
+*.log
+*.error.log
+build/
+dist/
+.venv/
+mlxenv/
+__pycache__/
