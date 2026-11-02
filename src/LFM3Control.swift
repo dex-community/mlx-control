@@ -1,6 +1,11 @@
 import SwiftUI
 import AppKit
 
+enum AppConfig {
+    /// Lo screenshot del pannello non può disegnare un TextField: lo sostituisce con un'etichetta.
+    static var showSearchField = true
+}
+
 // MARK: - Gestione servizi (LaunchAgent)
 
 final class Service: ObservableObject {
@@ -386,6 +391,12 @@ private struct SectionLabel: View {
 
 struct MenuContent: View {
     @ObservedObject var state: AppState
+    @ObservedObject var store: ModelStore
+
+    init(state: AppState) {
+        self.state = state
+        self.store = state.modelStore
+    }
 
     /// Riga etichetta + controllo, tutto allineato a sinistra.
     @ViewBuilder
@@ -427,17 +438,17 @@ struct MenuContent: View {
                 paramRow("Attivo") {
                     ValuePicker(
                         selection: Binding(
-                            get: { state.modelStore.activePath },
+                            get: { store.activePath },
                             set: { path in
-                                if let model = state.modelStore.installed.first(where: { $0.path == path }) {
+                                if let model = store.installed.first(where: { $0.path == path }) {
                                     state.modelStore.setActive(model)
                                     state.model.restart()
                                 }
                             }
                         ),
-                        options: state.modelStore.installed.map { $0.path },
+                        options: store.installed.map { $0.path },
                         label: { path in
-                            state.modelStore.installed.first(where: { $0.path == path })?.name
+                            store.installed.first(where: { $0.path == path })?.name
                                 ?? (path as NSString).lastPathComponent
                         }
                     )
@@ -445,18 +456,23 @@ struct MenuContent: View {
                 }
                 HStack(spacing: 6) {
                     Button {
-                        state.modelStore.showDownloader = true
-                        state.modelStore.fetchRemote()
+                        store.showDownloader.toggle()
+                        if store.showDownloader { store.fetchRemote() }
                     } label: {
-                        Text("Scarica da Hugging Face…").font(.system(size: 11))
+                        Text(store.showDownloader ? "Chiudi catalogo" : "Scarica da Hugging Face…")
+                            .font(.system(size: 11))
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
 
-                    if let status = state.modelStore.statusMessage {
+                    if let status = store.statusMessage, !store.showDownloader {
                         Text(status).font(.system(size: 10)).foregroundStyle(.tertiary)
                     }
                     Spacer(minLength: 0)
+                }
+
+                if store.showDownloader {
+                    downloaderSection
                 }
             }
 
@@ -557,9 +573,89 @@ struct MenuContent: View {
         .frame(width: 340, alignment: .leading)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { state.reloadFromDisk() }
-        .sheet(isPresented: $state.modelStore.showDownloader) {
-            DownloaderSheet(store: state.modelStore, state: state)
+    }
+
+    /// Catalogo MLX su Hugging Face, mostrato inline (niente sheet: nei pannelli
+    /// MenuBar la presentazione modale viene rimandata e si aggiorna solo riaprendo).
+    private var downloaderSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                if AppConfig.showSearchField {
+                    TextField("Cerca (es. qwen, llama, mlx)", text: $store.search)
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.small)
+                        .frame(width: 190)
+                } else {
+                    Text(store.search.isEmpty ? "Cerca (es. qwen, llama, mlx)" : store.search)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 190, alignment: .leading)
+                }
+                Button("Cerca") { store.fetchRemote() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                Spacer(minLength: 0)
+            }
+
+            // Filtri rapidi: la casella di testo nei pannelli MenuBar non prende
+            // sempre il focus, quindi ci sono anche scorciatoie.
+            HStack(spacing: 4) {
+                ForEach(["qwen", "llama", "mistral", "gemma", "lfm"], id: \.self) { tag in
+                    Button {
+                        store.search = tag
+                        store.fetchRemote()
+                    } label: {
+                        Text(tag).font(.system(size: 10))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                }
+                Spacer(minLength: 0)
+            }
+
+            if let downloading = store.downloading {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Scaricando \(downloading)").font(.system(size: 10))
+                    ProgressView(value: store.downloadPercent, total: 100)
+                        .controlSize(.small)
+                }
+            } else if store.remote.isEmpty {
+                Text(store.statusMessage ?? "Premi Cerca per elencare i modelli MLX.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(store.remote.prefix(6)) { model in
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(model.id).font(.system(size: 10))
+                                Text("\(model.downloads) download · \(model.likes) like")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 8)
+                            Button("Scarica") { store.download(model) }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                        }
+                        .padding(.vertical, 2)
+                        Divider()
+                    }
+                    if store.remote.count > 6 {
+                        Text("+ \(store.remote.count - 6) altri modelli: usa la ricerca")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                            .padding(.top, 2)
+                    }
+                }
+            }
+
+            if let status = store.statusMessage, store.downloading == nil {
+                Text(status).font(.system(size: 10)).foregroundStyle(.secondary)
+            }
         }
+        .padding(.leading, 8)
+        .padding(.top, 2)
     }
 
     private var header: some View {
@@ -659,77 +755,6 @@ struct MenuContent: View {
                 Spacer(minLength: 0)
             }
         }
-    }
-}
-
-/// Pannello di download dei modelli MLX da Hugging Face.
-private struct DownloaderSheet: View {
-    @ObservedObject var store: ModelStore
-    @ObservedObject var state: AppState
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Scarica modelli MLX")
-                    .font(.system(size: 14, weight: .semibold))
-                Spacer()
-                Button("Chiudi") { store.showDownloader = false }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-            }
-
-            HStack(spacing: 6) {
-                TextField("Cerca su Hugging Face…", text: $store.search)
-                    .textFieldStyle(.roundedBorder)
-                    .controlSize(.small)
-                    .onSubmit { store.fetchRemote() }
-                Button("Cerca") { store.fetchRemote() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-            }
-
-            if let downloading = store.downloading {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Scaricando \(downloading)")
-                        .font(.system(size: 11))
-                    ProgressView(value: store.downloadPercent, total: 100)
-                        .controlSize(.small)
-                }
-            } else if store.remote.isEmpty {
-                Text(store.statusMessage ?? "Premi Cerca per elencare i modelli MLX.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 12)
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(store.remote) { model in
-                            HStack(spacing: 8) {
-                                VStack(alignment: .leading, spacing: 0) {
-                                    Text(model.id).font(.system(size: 11))
-                                    Text("\(model.downloads) download · \(model.likes) like")
-                                        .font(.system(size: 9))
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer(minLength: 8)
-                                Button("Scarica") { store.download(model) }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                            }
-                            .padding(.vertical, 2)
-                            Divider()
-                        }
-                    }
-                }
-                .frame(maxHeight: 300)
-            }
-
-            if let status = store.statusMessage, store.downloading == nil {
-                Text(status).font(.system(size: 10)).foregroundStyle(.secondary)
-            }
-        }
-        .padding(16)
-        .frame(width: 460, height: 420)
     }
 }
 

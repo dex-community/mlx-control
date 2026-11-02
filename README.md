@@ -8,7 +8,8 @@ Nato per far girare **LFM3-1.7B-MLX-4bit** (Liquid AI) su Apple Silicon senza
 LM Studio, che spesso dà problemi.
 
 <p align="center">
-  <img src="docs/screenshot-menu.png" alt="Menu bar extra" width="320">
+  <img src="docs/screenshot-menu.png" alt="Pannello" width="320">
+  <img src="docs/screenshot-download.png" alt="Catalogo Hugging Face" width="320">
 </p>
 
 ## Funzionalità
@@ -16,7 +17,8 @@ LM Studio, che spesso dà problemi.
 - **Pannello personalizzato** (non un menu nativo): etichette, controlli, pulsanti
   e opzioni **tutti allineati a sinistra**
 - **Accendi / spegni** il server MLX e il proxy Caveman con un click (interruttore ON/OFF)
-- **Scarica modelli MLX da Hugging Face** direttamente dal pannello, con progresso
+- **Scarica modelli MLX da Hugging Face** direttamente dal pannello, con ricerca,
+  filtri rapidi e barra di progresso (sezione inline: si apre e si chiude subito)
 - **Modello attivo** selezionabile tra quelli installati (formato LM Studio:
   `~/.lmstudio/models/<org>/<nome>`)
 - **Agente predefinito** MiniMax M3.1 Flash oppure LFM3 locale, con un click
@@ -98,6 +100,19 @@ custom_provider:
           output: 8192
 defaultModel: custom_provider:mlx/lfm3-1.7b-mlx
 ```
+
+## Note sull'implementazione del pannello
+
+Il pannello è una `MenuBarExtra` con `.menuBarExtraStyle(.window)` (il menu nativo
+imporrebbe sottomenu e righe a tutta larghezza) e **osserva direttamente** il
+`ModelStore`: se il pannello osservasse solo `AppState`, le variazioni di
+`showDownloader` non propagherebbero e la sezione comparirebbe solo alla riapertura.
+
+Il catalogo è una sezione inline e non uno `sheet`: nei pannelli della barra dei menu
+la presentazione modale viene rimandata e lo stato risulta "congelato" fino a
+chiudere e riaprire il pannello. Anche lo `ScrollView` è stato sostituito da una
+lista semplice (i pannelli MenuBar non gestiscono bene lo scroll), con i primi 6
+modelli e filtri rapidi per famiglia.
 
 ## Comandi (modelli)
 
