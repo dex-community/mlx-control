@@ -115,11 +115,16 @@ install -m 755 "$SRC_DIR/scripts/register-provider.py" "$INSTALL_DIR/scripts/reg
 install -m 755 "$SRC_DIR/scripts/minimax_config.py" "$INSTALL_DIR/scripts/minimax_config.py"
 install -m 755 "$SRC_DIR/scripts/fast_compact.py" "$INSTALL_DIR/fast_compact.py"
 install -m 755 "$SRC_DIR/scripts/rizzo_compact.py" "$INSTALL_DIR/rizzo_compact.py"
-if [ ! -f "$INSTALL_DIR/model-settings.json" ]; then
-  install -m 644 "$SRC_DIR/config/model-settings.json" "$INSTALL_DIR/model-settings.json"
+# L'installer copia sé stesso: il pannello può rilanciarlo con un clic.
+install -m 755 "$SRC_DIR/install.sh" "$INSTALL_DIR/install.sh"
+mkdir -p "$INSTALL_DIR/config"
+install -m 644 "$SRC_DIR/config/model-settings.json" "$INSTALL_DIR/config/model-settings.json" 2>/dev/null || true
+install -m 644 "$SRC_DIR/config/fast-compact.json" "$INSTALL_DIR/config/fast-compact.json" 2>/dev/null || true
+if [ ! -f "$INSTALL_DIR/model-settings.json" ] && [ -f "$INSTALL_DIR/config/model-settings.json" ]; then
+  install -m 644 "$INSTALL_DIR/config/model-settings.json" "$INSTALL_DIR/model-settings.json"
 fi
-if [ ! -f "$INSTALL_DIR/fast-compact.json" ]; then
-  install -m 644 "$SRC_DIR/config/fast-compact.json" "$INSTALL_DIR/fast-compact.json"
+if [ ! -f "$INSTALL_DIR/fast-compact.json" ] && [ -f "$INSTALL_DIR/config/fast-compact.json" ]; then
+  install -m 644 "$INSTALL_DIR/config/fast-compact.json" "$INSTALL_DIR/fast-compact.json"
 fi
 ok "script installati"
 
@@ -298,10 +303,14 @@ if [ -d "/Applications/LFM3 Control.app" ]; then
   mv "/Applications/LFM3 Control.app" "${HOME_DIR}/.Trash/LFM3 Control.app" 2>/dev/null || true
   ok "vecchia app spostata nel Trash"
 fi
-if "$SRC_DIR/build.sh" >/dev/null 2>&1; then
-  ok "app installata in /Applications/MLX Control.app"
+if [ -x "$SRC_DIR/build.sh" ]; then
+  if "$SRC_DIR/build.sh" >/dev/null 2>&1; then
+    ok "app installata in /Applications/MLX Control.app"
+  else
+    warn "Compilazione della Menu Bar Extra non riuscita: rilancia ./build.sh"
+  fi
 else
-  warn "Compilazione della Menu Bar Extra non riuscita: rilancia ./build.sh"
+  ok "app già installata (i sorgenti non sono in questa cartella)"
 fi
 
 printf '\n\033[1mInstallazione completata.\033[0m\n'

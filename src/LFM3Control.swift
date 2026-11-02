@@ -417,6 +417,43 @@ final class AppState: ObservableObject {
     func openRizzoPlayground() {
         NSWorkspace.shared.open(URL(string: "http://127.0.0.1:8017/playground")!)
     }
+
+    /// Riepilogo dello stato dello stack, con un solo clic.
+    @Published var stackReport: String?
+
+    func checkStack() {
+        var lines: [String] = []
+        lines.append("Modello: \(model.isRunning ? "attivo" : "spento")")
+        lines.append("Rizzo Flow: \(rizzo.isRunning ? "attivo" : "spento")")
+        lines.append("Compattazione veloce: \(fastCompact.isRunning ? "attiva" : "spenta")")
+        lines.append("Caveman: \(caveman.isRunning ? "attivo" : "spento")")
+        lines.append("Modalità compressione: \(compactionMode)")
+        if let stats = lastCompaction {
+            let elapsed = (stats["elapsed"] as? Double).map { String(format: "%.1f s", $0) } ?? "?"
+            lines.append("Ultima compattazione: \(elapsed)")
+        }
+        stackReport = lines.joined(separator: " · ")
+    }
+
+    /// Rilancia l'installer: allinea dipendenze, modello, servizi e provider.
+    func updateEnvironment() {
+        let installer = "\(Self.installDir)/install.sh"
+        guard FileManager.default.isExecutableFile(atPath: installer) else {
+            stackReport = "Installer non trovato in \(installer): scarica mlx-control e rilancia ./install.sh"
+            return
+        }
+        stackReport = "Aggiornamento dell'ambiente in corso…"
+        runScript(installer, arguments: []) { [weak self] status, output in
+            guard let self = self else { return }
+            if status == 0 {
+                self.stackReport = "Ambiente aggiornato. Riavvia MiniMax Code per applicare il provider."
+                self.refreshAll()
+            } else {
+                let tail = output.split(separator: "\n").suffix(3).joined(separator: " · ")
+                self.stackReport = "Aggiornamento non riuscito: \(tail)"
+            }
+        }
+    }
 }
 
 // MARK: - Interfaccia (pannello)
@@ -927,7 +964,30 @@ struct MenuContent: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+
+                Button {
+                    state.checkStack()
+                } label: {
+                    Text("Verifica stack").font(.system(size: 11))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button {
+                    state.updateEnvironment()
+                } label: {
+                    Text("Aggiorna ambiente").font(.system(size: 11))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
                 Spacer(minLength: 0)
+            }
+
+            if let report = state.stackReport {
+                Text(report)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             HStack(spacing: 6) {
