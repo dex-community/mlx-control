@@ -38,7 +38,8 @@ swiftc -O -parse-as-library \
   -target arm64-apple-macos13.0 \
   -framework SwiftUI -framework AppKit \
   -o "$APP/Contents/MacOS/LFM3Control" \
-  "$SRC_DIR/src/LFM3Control.swift"
+  "$SRC_DIR/src/LFM3Control.swift" \
+  "$SRC_DIR/src/Models.swift"
 
 codesign -s - --force --deep "$APP" >/dev/null 2>&1 || true
 

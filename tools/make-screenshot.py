@@ -29,6 +29,12 @@ struct ScreenshotMain {
     @MainActor
     static func main() {
         let state = AppState()
+        // Attende il caricamento della lista dei modelli locali.
+        let deadline = Date().addingTimeInterval(5)
+        while state.modelStore.installed.isEmpty && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        state.modelStore.activePath = state.modelStore.installed.first?.path ?? ""
         // Simula i valori mostrati in condizioni tipiche.
         state.model.isRunning = true
         state.caveman.isRunning = true
@@ -60,13 +66,16 @@ struct ScreenshotMain {
 
 path = os.path.join(TMP, "shot.swift")
 open(path, "w", encoding="utf-8").write(shot)
+models_src = os.path.join(ROOT, "src", "Models.swift")
+models_copy = os.path.join(TMP, "Models.swift")
+open(models_copy, "w", encoding="utf-8").write(open(models_src, encoding="utf-8").read())
 
 subprocess.run(
     [
         "swiftc", "-O", "-parse-as-library",
         "-target", "arm64-apple-macos13.0",
         "-framework", "SwiftUI", "-framework", "AppKit",
-        "-o", os.path.join(TMP, "shot"), path,
+        "-o", os.path.join(TMP, "shot"), path, models_copy,
     ],
     check=True,
 )

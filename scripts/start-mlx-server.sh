@@ -5,7 +5,14 @@ set -euo pipefail
 
 BASE="${LFM3_INSTALL_DIR:-/Users/io/.minimax/local-models}"
 SETTINGS="$BASE/model-settings.json"
-MODEL="${LFM3_MODEL_PATH:-/Users/io/.lmstudio/models/LiquidAI/LFM3-1.7B-MLX-4bit}"
+MODEL_FILE="$BASE/current-model.txt"
+
+# Modello attivo: current-model.txt (impostato dalla Menu Bar Extra) o il default.
+if [ -f "$MODEL_FILE" ]; then
+  MODEL="$(cat "$MODEL_FILE")"
+else
+  MODEL="${LFM3_MODEL_PATH:-$HOME/.lmstudio/models/LiquidAI/LFM3-1.7B-MLX-4bit}"
+fi
 SERVER="$BASE/mlxenv/bin/mlx_lm.server"
 
 # --- lettura parametri (python3 di sistema, nessuna dipendenza esterna) ---
@@ -33,6 +40,11 @@ export MLX_LM_DEFAULT_TEMPERATURE="${TEMP:-0.1}"
 export MLX_LM_DEFAULT_TOP_K="${TOP_K:-50}"
 export MLX_LM_DEFAULT_MIN_P="${MIN_P:-0.0}"
 export MLX_LM_DEFAULT_REPETITION_PENALTY="${REP_PENALTY:-1.1}"
+
+# Hint di sistema: tiene i modelli piccoli ancorati alla working directory reale.
+# I modelli 1.7B tendono a copiare nel contesto il percorso dell'allegato
+# (…/.minimax/v2/assets/…) e a usarlo come directory di lavoro.
+export MLX_SYSTEM_HINT="${MLX_SYSTEM_HINT:-Working directory: usa SEMPRE percorsi relativi alla directory di lavoro corrente della sessione. Non usare mai come directory di lavoro i percorsi degli asset allegati (/Users/io/.minimax/v2/assets/...), delle cache o di /tmp: sono file allegati, non il progetto. Se un comando fallisce, correggi il percorso invece di ripeterelo.}"
 
 if [ "$THINKING" = "True" ] || [ "$THINKING" = "true" ]; then
   THINK_ARGS='{"enable_thinking":true}'

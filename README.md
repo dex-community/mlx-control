@@ -15,7 +15,12 @@ LM Studio, che spesso dà problemi.
 
 - **Pannello personalizzato** (non un menu nativo): etichette, controlli, pulsanti
   e opzioni **tutti allineati a sinistra**
-- **Accendi / spegni** il server MLX e il proxy Caveman con un click
+- **Accendi / spegni** il server MLX e il proxy Caveman con un click (interruttore ON/OFF)
+- **Scarica modelli MLX da Hugging Face** direttamente dal pannello, con progresso
+- **Modello attivo** selezionabile tra quelli installati (formato LM Studio:
+  `~/.lmstudio/models/<org>/<nome>`)
+- **Agente predefinito** MiniMax M3.1 Flash oppure LFM3 locale, con un click
+- **Esci** / **Esci e spegni il modello** (l'app non si riavvia da sola)
 - **Parametri del modello** applicati immediatamente: temperatura, top-k, min-p,
   repetition penalty, max output tokens, thinking on/off
 - **Valori consigliati** con un click (temperature 0.1, top-k 50, repetition 1.1,
@@ -93,6 +98,36 @@ custom_provider:
           output: 8192
 defaultModel: custom_provider:mlx/lfm3-1.7b-mlx
 ```
+
+## Comandi (modelli)
+
+```bash
+# modelli installati
+~/.minimax/local-models/scripts/models.py list-installed
+# catalogo MLX su Hugging Face
+~/.minimax/local-models/scripts/models.py list-remote "qwen"
+# download (stampa righe JSON di progresso)
+~/.minimax/local-models/scripts/models.py download mlx-community/Qwen2.5-0.5B-Instruct-4bit
+# modello servito dal server
+~/.minimax/local-models/scripts/models.py set-active ~/.lmstudio/models/LiquidAI/LFM3-1.7B-MLX-4bit
+```
+
+## Hint di sistema e modelli piccoli
+
+I modelli da 1-2B tendono a copiare nel contesto il percorso di un file allegato
+(es. `~/.minimax/v2/assets/...`) e a usarlo come directory di lavoro, causando
+comandi falliti a ripetizione. Il server può iniettare un hint di sistema
+automatico:
+
+```
+MLX_SYSTEM_HINT="Working directory: usa SEMPRE percorsi relativi alla directory
+di lavoro corrente della sessione. Non usare mai come directory di lavoro i
+percorsi degli asset allegati, delle cache o di /tmp: sono file allegati, non
+il progetto. Se un comando fallisce, correggi il percorso invece di ripeterlo."
+```
+
+Il valore di default è impostato da `scripts/start-mlx-server.sh` e può essere
+disattivato con `MLX_SYSTEM_HINT=""`.
 
 ## Comandi
 

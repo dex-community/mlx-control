@@ -158,8 +158,10 @@ final class AppState: ObservableObject {
         healthURL: "http://127.0.0.1:8787/health/live"
     )
     let settings = ModelSettings()
+    var modelStore = ModelStore()
 
     @Published var contextWindow: Int = 262144
+    @Published var defaultAgent: String = "locale"
     @Published var lastApplied: Date?
     @Published var busyMessage: String?
 
@@ -168,6 +170,8 @@ final class AppState: ObservableObject {
     init() {
         settings.load()
         contextWindow = Self.currentContextWindow()
+        defaultAgent = Self.currentDefaultAgent()
+        modelStore.refreshInstalled()
         refreshAll()
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             self?.refreshAll()
@@ -264,6 +268,41 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Modello predefinito dell'agente: locale oppure cloud.
+    static func currentDefaultAgent() -> String {
+        let config = home + "/.minimax/config.yaml"
+        guard let text = try? String(contentsOfFile: config, encoding: .utf8) else { return "locale" }
+        for line in text.components(separatedBy: "\n") where line.hasPrefix("defaultModel:") {
+            return line.contains("custom_provider:mlx") ? "locale" : "cloud"
+        }
+        return "locale"
+    }
+
+    func setDefaultAgent(_ value: String) {
+        defaultAgent = value
+        let target = value == "locale"
+            ? "custom_provider:mlx/lfm3-1.7b-mlx"
+            : "minimax/MiniMax-M3.1-Flash"
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: Self.installDir + "/scripts/set-default-model.py")
+        p.arguments = [target]
+        try? p.run()
+        p.waitUntilExit()
+    }
+
+    /// Esce dall'app: scarica il LaunchAgent per non essere riavviata subito.
+    func quit(stopServer: Bool) {
+        if stopServer { model.stop() }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        p.arguments = ["bootout", "gui/\(getuid())/com.minimax.lfm3control"]
+        try? p.run()
+        p.waitUntilExit()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            NSApplication.shared.terminate(nil)
+        }
+    }
+
     func openLogs() {
         let t = Process()
         t.executableURL = URL(fileURLWithPath: "/usr/bin/tail")
@@ -311,21 +350,23 @@ private struct ServiceRow: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
+            Spacer(minLength: 6)
             Button {
-                service.toggle()
+                service.isRunning ? service.stop() : service.start()
             } label: {
                 HStack(spacing: 4) {
-                    Image(systemName: service.isRunning ? "stop.fill" : "play.fill")
-                        .font(.system(size: 8))
-                    Text(service.isRunning ? "Spegni" : "Accendi")
-                        .font(.system(size: 11))
+                    Circle()
+                        .fill(service.isRunning ? Color.green : Color.secondary)
+                        .frame(width: 6, height: 6)
+                    Text(service.isRunning ? "ON" : "OFF")
+                        .font(.system(size: 10, weight: .semibold))
                 }
                 .padding(.horizontal, 9)
                 .padding(.vertical, 4)
                 .background(
-                    Capsule().fill((service.isRunning ? Color.red : Color.green).opacity(0.16))
+                    Capsule().fill((service.isRunning ? Color.green : Color.secondary).opacity(0.16))
                 )
-                .foregroundStyle(service.isRunning ? Color.red : Color.green)
+                .foregroundStyle(service.isRunning ? Color.green : Color.secondary)
             }
             .buttonStyle(.plain)
             .disabled(service.isBusy)
@@ -377,6 +418,68 @@ struct MenuContent: View {
                 SectionLabel(text: "Servizi")
                 ServiceRow(service: state.model)
                 ServiceRow(service: state.caveman)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 5) {
+                SectionLabel(text: "Modello")
+                paramRow("Attivo") {
+                    ValuePicker(
+                        selection: Binding(
+                            get: { state.modelStore.activePath },
+                            set: { path in
+                                if let model = state.modelStore.installed.first(where: { $0.path == path }) {
+                                    state.modelStore.setActive(model)
+                                    state.model.restart()
+                                }
+                            }
+                        ),
+                        options: state.modelStore.installed.map { $0.path },
+                        label: { path in
+                            state.modelStore.installed.first(where: { $0.path == path })?.name
+                                ?? (path as NSString).lastPathComponent
+                        }
+                    )
+                    .frame(width: 190, alignment: .leading)
+                }
+                HStack(spacing: 6) {
+                    Button {
+                        state.modelStore.showDownloader = true
+                        state.modelStore.fetchRemote()
+                    } label: {
+                        Text("Scarica da Hugging Face…").font(.system(size: 11))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    if let status = state.modelStore.statusMessage {
+                        Text(status).font(.system(size: 10)).foregroundStyle(.tertiary)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 5) {
+                SectionLabel(text: "Agente predefinito")
+                paramRow("Usa") {
+                    ValuePicker(
+                        selection: Binding(
+                            get: { state.defaultAgent },
+                            set: { state.setDefaultAgent($0) }
+                        ),
+                        options: ["locale", "cloud"],
+                        label: { $0 == "locale" ? "LFM3 locale" : "MiniMax M3.1 Flash" }
+                    )
+                }
+                Text(state.defaultAgent == "locale"
+                     ? "L'agente usa il modello in locale: più lento e meno affidabile sui task lunghi."
+                     : "L'agente usa MiniMax M3.1 Flash; il modello locale resta selezionabile a mano.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Divider()
@@ -454,6 +557,9 @@ struct MenuContent: View {
         .frame(width: 340, alignment: .leading)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { state.reloadFromDisk() }
+        .sheet(isPresented: $state.modelStore.showDownloader) {
+            DownloaderSheet(store: state.modelStore, state: state)
+        }
     }
 
     private var header: some View {
@@ -533,7 +639,97 @@ struct MenuContent: View {
                 .controlSize(.small)
                 Spacer(minLength: 0)
             }
+
+            HStack(spacing: 6) {
+                Button {
+                    state.quit(stopServer: false)
+                } label: {
+                    Text("Esci").font(.system(size: 11))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button {
+                    state.quit(stopServer: true)
+                } label: {
+                    Text("Esci e spegni il modello").font(.system(size: 11))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                Spacer(minLength: 0)
+            }
         }
+    }
+}
+
+/// Pannello di download dei modelli MLX da Hugging Face.
+private struct DownloaderSheet: View {
+    @ObservedObject var store: ModelStore
+    @ObservedObject var state: AppState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Scarica modelli MLX")
+                    .font(.system(size: 14, weight: .semibold))
+                Spacer()
+                Button("Chiudi") { store.showDownloader = false }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+
+            HStack(spacing: 6) {
+                TextField("Cerca su Hugging Face…", text: $store.search)
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.small)
+                    .onSubmit { store.fetchRemote() }
+                Button("Cerca") { store.fetchRemote() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+
+            if let downloading = store.downloading {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Scaricando \(downloading)")
+                        .font(.system(size: 11))
+                    ProgressView(value: store.downloadPercent, total: 100)
+                        .controlSize(.small)
+                }
+            } else if store.remote.isEmpty {
+                Text(store.statusMessage ?? "Premi Cerca per elencare i modelli MLX.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 12)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(store.remote) { model in
+                            HStack(spacing: 8) {
+                                VStack(alignment: .leading, spacing: 0) {
+                                    Text(model.id).font(.system(size: 11))
+                                    Text("\(model.downloads) download · \(model.likes) like")
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 8)
+                                Button("Scarica") { store.download(model) }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                            }
+                            .padding(.vertical, 2)
+                            Divider()
+                        }
+                    }
+                }
+                .frame(maxHeight: 300)
+            }
+
+            if let status = store.statusMessage, store.downloading == nil {
+                Text(status).font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+        }
+        .padding(16)
+        .frame(width: 460, height: 420)
     }
 }
 

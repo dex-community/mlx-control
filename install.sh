@@ -16,6 +16,9 @@ echo "→ Copia degli script"
 install -m 755 "$SRC_DIR/scripts/lfm3-mlx.sh" "$INSTALL_DIR/lfm3-mlx.sh"
 install -m 755 "$SRC_DIR/scripts/start-mlx-server.sh" "$INSTALL_DIR/start-mlx-server.sh"
 install -m 755 "$SRC_DIR/scripts/set-context.py" "$INSTALL_DIR/set-context.py"
+mkdir -p "$INSTALL_DIR/scripts"
+install -m 755 "$SRC_DIR/scripts/models.py" "$INSTALL_DIR/scripts/models.py"
+install -m 755 "$SRC_DIR/scripts/set-default-model.py" "$INSTALL_DIR/scripts/set-default-model.py"
 if [ ! -f "$INSTALL_DIR/model-settings.json" ]; then
   install -m 644 "$SRC_DIR/config/model-settings.json" "$INSTALL_DIR/model-settings.json"
 fi
