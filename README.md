@@ -103,6 +103,17 @@ e può essere scelto come **modello predefinito** dal pannello ("Agente predefin
 > Il supporto LFM3 in `mlx-lm` arriva dalla PR [#2016](https://github.com/ml-explore/mlx-lm/pull/2016),
 > non ancoramerged: l'installer la installa direttamente da GitHub.
 
+Il server viene poi **patchato** da `scripts/patch-mlx-server.py` (idempotente, con copia del file
+originale in `server.py.mlxcontrol-orig`): alias dei modelli, parametri di campionamento da
+variabili d'ambiente, endpoint `/v1/responses/input_tokens`, rimozione dei tag `<think>`, hint di
+sistema e **riparazione degli argomenti dei tool** secondo lo schema dichiarato.
+
+La riparazione serve ai modelli piccoli: un 1.7B spesso produce una chiamata `ask_user` quasi
+corretta ma con forme sbagliate (`options: ["a", "b"]` invece di una lista di oggetti, oppure
+l'intero array serializzato come stringa JSON). Il runtime rifiuta la chiamata e il modello
+ripete la stessa domanda all'infinito. Il server corregge la forma prima di rispondere e la
+chiamata viene finalmente accettata.
+
 Il server MLX è avviato da un LaunchAgent e riparte da solo se muore. Il pannello lo riavvia
 automaticamente se all'avvio non risponde.
 
@@ -192,6 +203,7 @@ Ogni parametro si applica subito: il pannello salva il file di configurazione e 
 
 ~/.minimax/local-models/scripts/set-compression.py native|rizzo|rizzo-only
 ~/.minimax/local-models/scripts/register-provider.py --default-model local
+~/.minimax/local-models/scripts/patch-mlx-server.py --check   # stato delle patch
 ```
 
 ## Dove stanno i file
@@ -248,6 +260,12 @@ sessioni lunghe conviene il modello cloud. Nel pannello: "Agente predefinito →
 **Errore `model ... is unavailable in the current catalog`.** Il `defaultModel` punta a un modello
 non registrato: rilancia `register-provider.py --default-model local`.
 
+**Il modello ripete la stessa domanda all'infinito.** Succede quando una sua chiamata a un tool
+viene rifiutata dal runtime (per esempio `ask_user` con gli argomenti malformati): il modello
+riprova identico. La patch del server (`scripts/patch-mlx-server.py`) corregge gli argomenti
+prima che lascino il server: per applicarla rilancia `~/.minimax/local-models/install.sh` e poi
+riavvia il server MLX.
+
 **`POST_ADMISSION_FAILED` durante la sessione.** La finestra di contesto della sessione è più vecchia
 di quella configurata: esegui `lfm3-mlx.sh fix-sessions` e riavvia MiniMax Code.
 
@@ -257,6 +275,7 @@ di quella configurata: esegui `lfm3-mlx.sh fix-sessions` e riavvia MiniMax Code.
 ./build.sh                      # compila e installa la Menu Bar Extra
 swift tools/make-icon.swift build/LFM3Control.iconset   # rigenera l'icona
 python3 tools/make-screenshot.py                        # rigenera gli screenshot
+python3 tools/test-tool-repair.py                       # test della riparazione degli argomenti dei tool
 ```
 
 Struttura:

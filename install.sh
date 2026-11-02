@@ -112,6 +112,7 @@ install -m 755 "$SRC_DIR/scripts/set-context.py" "$INSTALL_DIR/set-context.py"
 install -m 755 "$SRC_DIR/scripts/set-default-model.py" "$INSTALL_DIR/scripts/set-default-model.py"
 install -m 755 "$SRC_DIR/scripts/set-compression.py" "$INSTALL_DIR/scripts/set-compression.py"
 install -m 755 "$SRC_DIR/scripts/register-provider.py" "$INSTALL_DIR/scripts/register-provider.py"
+install -m 755 "$SRC_DIR/scripts/patch-mlx-server.py" "$INSTALL_DIR/scripts/patch-mlx-server.py"
 install -m 755 "$SRC_DIR/scripts/minimax_config.py" "$INSTALL_DIR/scripts/minimax_config.py"
 install -m 755 "$SRC_DIR/scripts/fast_compact.py" "$INSTALL_DIR/fast_compact.py"
 install -m 755 "$SRC_DIR/scripts/rizzo_compact.py" "$INSTALL_DIR/rizzo_compact.py"
@@ -140,11 +141,10 @@ if [ ! -x "$VENV/bin/mlx_lm.server" ]; then
 fi
 ok "ambiente pronto: $VENV"
 
-# Patch del server: alias dei modelli, parametri di campionamento e hint di sistema.
-if ! grep -q "MLX_LM_MODEL_ALIASES" "$VENV/lib/python3.12/site-packages/mlx_lm/server.py" 2>/dev/null \
-   && ! grep -rq "MLX_LM_MODEL_ALIASES" "$VENV/lib"/python*/site-packages/mlx_lm/server.py 2>/dev/null; then
-  warn "Patch mlx-lm non applicata (il modello potrebbe non essere raggiungibile con gli alias)."
-fi
+# Patch del server MLX: alias dei modelli, parametri di campionamento, hint di
+# sistema, endpoint input_tokens e riparazione degli argomenti dei tool.
+"$PY" "$INSTALL_DIR/scripts/patch-mlx-server.py" --venv "$VENV" \
+  || warn "Patch di mlx-lm non applicate del tutto: alcune funzionalita' potrebbero mancare."
 
 # ------------------------------------------------------------------- modello
 if [ "$WITH_MODEL" -eq 1 ]; then
