@@ -61,6 +61,17 @@ KV_START="$(read_setting quantized_kv_start)"
 
 export MLX_LM_MODEL_ALIASES="${MLX_LM_MODEL_ALIASES:-lfm3-1.7b-mlx}"
 
+# Alias dinamici: sync-models.py mantiene questo file allineato ai modelli
+# installati (~/.mlxControl/models). Ogni riga ha la forma "nome=percorso".
+ALIASES_FILE="$CONTROL_DIR/model-aliases.env"
+if [ -f "$ALIASES_FILE" ]; then
+  # shellcheck disable=SC1090
+  . "$ALIASES_FILE"
+  if [ -n "${MLX_LM_MODEL_ALIASES_EXTRA:-}" ]; then
+    export MLX_LM_MODEL_ALIASES="${MLX_LM_MODEL_ALIASES},${MLX_LM_MODEL_ALIASES_EXTRA}"
+  fi
+fi
+
 # Alias aggiuntivi: "nome=percorso" espone un secondo modello (es. quello veloce
 # usato per il checkpoint durante la compattazione).
 FAST_PATH="$(read_setting fast_model_path)"
@@ -76,10 +87,9 @@ export MLX_LM_DEFAULT_TOP_K="${TOP_K:-50}"
 export MLX_LM_DEFAULT_MIN_P="${MIN_P:-0.0}"
 export MLX_LM_DEFAULT_REPETITION_PENALTY="${REP_PENALTY:-1.1}"
 
-# Hint di sistema: tiene i modelli piccoli ancorati alla working directory reale.
-# I modelli 1.7B tendono a copiare nel contesto il percorso dell'allegato
-# (…/.minimax/v2/assets/…) e a usarlo come directory di lavoro.
-export MLX_SYSTEM_HINT="${MLX_SYSTEM_HINT:-Working directory: usa SEMPRE percorsi relativi alla directory di lavoro corrente della sessione. Non usare mai come directory di lavoro i percorsi degli asset allegati (${HOME_DIR}/.minimax/v2/assets/...), delle cache o di /tmp: sono file allegati, non il progetto. Se un comando fallisce, correggi il percorso invece di ripeterelo.}"
+# Hint di sistema di default (senza apici: resta espandibile in modo sicuro).
+MLX_HINT_DEFAULT="Working directory: usa SEMPRE percorsi relativi alla directory di lavoro corrente della sessione. Non usare mai come directory di lavoro i percorsi degli asset allegati (${HOME_DIR}/.minimax/v2/assets/...), delle cache o di /tmp: sono file allegati, non il progetto. Se un comando fallisce, correggi il percorso invece di ripeterlo. REGOLE DI COMPORTAMENTO: se il messaggio ricevuto e un saluto, una domanda banale, una richiesta di chiarimento oppure non chiede esplicitamente di analizzare, cercare, modificare o verificare il codice, rispondi in modo breve e diretto e NON chiamare alcuno strumento. Usa gli strumenti solo se viene chiesto esplicitamente di esplorare il repository, cercare codice, modificare file o verificare qualcosa."
+export MLX_SYSTEM_HINT="${MLX_SYSTEM_HINT:-$MLX_HINT_DEFAULT}"
 
 if [ "$THINKING" = "True" ] || [ "$THINKING" = "true" ]; then
   THINK_ARGS='{"enable_thinking":true}'

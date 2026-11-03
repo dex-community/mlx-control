@@ -17,7 +17,7 @@ import sys
 import time
 
 HOME = os.path.expanduser("~")
-CONFIG = os.path.join(HOME, ".minimax", "config.yaml")
+CONFIG = os.environ.get("MINIMAX_CONFIG") or os.path.join(HOME, ".minimax", "config.yaml")
 DB = os.path.join(HOME, ".minimax", "v2", "sqlite", "runtime-state.sqlite")
 BACKUP = os.path.join(HOME, ".minimax", "v2", "sqlite", "runtime-state.backup.sqlite")
 PROVIDERS = ("mlx", "mlx-caveman")
@@ -25,7 +25,12 @@ MODEL_KEY = "lfm3-1.7b-mlx"
 
 
 def update_config(value: int) -> None:
-    """Riscrive limit.context dei provider MLX, preservando il resto del file."""
+    """Riscrive limit.context dei provider MLX, preservando il resto del file.
+
+    Il contesto viene applicato a tutti i modelli registrati nei provider
+    `mlx` e `mlx-caveman`: la lista dei modelli e' dinamica, quindi il
+    limite deve valere per tutti.
+    """
     with open(CONFIG, encoding="utf-8") as fh:
         lines = fh.read().split("\n")
 
@@ -42,7 +47,8 @@ def update_config(value: int) -> None:
                 # il blocco provider finisce alla prossima chiave di primo livello
                 if cur.strip() and not cur.startswith("    ") and cur.endswith(":") and cur != line:
                     break
-                if cur.strip() == f"{MODEL_KEY}:":
+                # chiave di un modello (indentazione 6 dentro `    models:`)
+                if len(cur) - len(cur.lstrip()) == 6 and cur.strip().endswith(":"):
                     in_model = True
                     out.append(cur)
                     j += 1

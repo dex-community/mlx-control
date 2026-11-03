@@ -26,7 +26,7 @@ from minimax_config import INSTALL_DIR, read_lines, set_provider_base_url, write
 FASTCOMPACT_CONFIG = os.path.join(INSTALL_DIR, "fast-compact.json")
 
 MODES = {
-    "native": {"base_url": "http://127.0.0.1:8080/v1", "mode": "native"},
+    "native": {"base_url": "http://127.0.0.1:8080/v1", "mode": "nativa"},
     "rizzo": {"base_url": "http://127.0.0.1:8081/v1", "mode": "rizzo"},
     "rizzo-only": {"base_url": "http://127.0.0.1:8081/v1", "mode": "rizzo-only"},
 }

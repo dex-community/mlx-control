@@ -108,8 +108,8 @@ install -m 755 "$SRC_DIR/scripts/start-mlx-server.sh" "$INSTALL_DIR/start-mlx-se
 install -m 755 "$SRC_DIR/scripts/rizzo-flow.sh" "$INSTALL_DIR/scripts/rizzo-flow.sh"
 install -m 755 "$SRC_DIR/scripts/fast-compact.sh" "$INSTALL_DIR/scripts/fast-compact.sh"
 install -m 755 "$SRC_DIR/scripts/models.py" "$INSTALL_DIR/scripts/models.py"
+install -m 755 "$SRC_DIR/scripts/sync-models.py" "$INSTALL_DIR/scripts/sync-models.py"
 install -m 755 "$SRC_DIR/scripts/set-context.py" "$INSTALL_DIR/set-context.py"
-install -m 755 "$SRC_DIR/scripts/set-default-model.py" "$INSTALL_DIR/scripts/set-default-model.py"
 install -m 755 "$SRC_DIR/scripts/set-compression.py" "$INSTALL_DIR/scripts/set-compression.py"
 install -m 755 "$SRC_DIR/scripts/register-provider.py" "$INSTALL_DIR/scripts/register-provider.py"
 install -m 755 "$SRC_DIR/scripts/patch-mlx-server.py" "$INSTALL_DIR/scripts/patch-mlx-server.py"
@@ -242,6 +242,8 @@ ok "LaunchAgent scritti"
 step "Registro il provider custom in MiniMax Code"
 if [ -f "${HOME_DIR}/.minimax/config.yaml" ]; then
   "$INSTALL_DIR/scripts/register-provider.py" --default-model local || warn "Registrazione provider non riuscita."
+  # La lista dei modelli segue in automatico i modelli installati su disco.
+  "$INSTALL_DIR/scripts/sync-models.py" || warn "Sincronizzazione dei modelli non riuscita."
 else
   warn "MiniMax Code non è ancora configurato: apri l'app almeno una volta, poi rilancia ./install.sh"
 fi

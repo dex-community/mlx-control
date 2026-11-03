@@ -26,6 +26,9 @@ final class ModelStore: ObservableObject {
     @Published var statusMessage: String?
     @Published var showDownloader: Bool = false
     @Published var activePath: String = ""
+    @Published var registrationMessage: String?
+    /// Chiamato quando i modelli servibili dal server cambiano (nuovi alias).
+    var onServerRestartNeeded: (() -> Void)?
 
     private let scriptsDir = "\(AppState.installDir)/scripts"
 
@@ -87,6 +90,10 @@ final class ModelStore: ObservableObject {
                         self.downloading = nil
                         self.statusMessage = "Modello scaricato"
                         self.refreshInstalled()
+                        // Il nuovo modello deve comparire subito in MiniMax Code.
+                        self.syncRegistration { _, needsRestart in
+                            if needsRestart { self.onServerRestartNeeded?() }
+                        }
                     } else if status == "error" {
                         self.downloading = nil
                         self.statusMessage = "Download fallito"
@@ -115,6 +122,49 @@ final class ModelStore: ObservableObject {
         DispatchQueue.main.async {
             self.activePath = model.path
             self.statusMessage = "Modello attivo: \(model.name)"
+        }
+        // La registrazione in MiniMax Code segue il modello attivo.
+        syncRegistration { _, needsRestart in
+            if needsRestart { self.onServerRestartNeeded?() }
+        }
+    }
+
+    /// Allinea MiniMax Code ai modelli installati: i provider `mlx` e
+    /// `mlx-caveman` vengono riscritti con la lista dei modelli presenti.
+    /// `completion` riceve il messaggio; `needsRestart` dice se il server
+    /// MLX deve essere riavviato (nuovi alias da caricare).
+    func syncRegistration(completion: ((String, Bool) -> Void)? = nil) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: scriptsDir + "/sync-models.py")
+        p.arguments = ["--json"]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = Pipe()
+        do { try p.run() } catch {
+            DispatchQueue.main.async {
+                self.registrationMessage = "Sincronizzazione non riuscita"
+                completion?("Sincronizzazione non riuscita", false)
+            }
+            return
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        let text = String(data: data, encoding: .utf8) ?? ""
+        var message = "Modelli sincronizzati"
+        var needsRestart = false
+        if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            let models = (obj["models"] as? [String]) ?? []
+            let changed = (obj["changed"] as? Bool) ?? false
+            needsRestart = (obj["restart_required"] as? Bool) ?? false
+            message = changed
+                ? "MiniMax Code aggiornato: \(models.joined(separator: ", "))"
+                : "MiniMax Code già allineato (\(models.count) modelli)"
+        } else if !text.isEmpty {
+            message = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        DispatchQueue.main.async {
+            self.registrationMessage = message
+            completion?(message, needsRestart)
         }
     }
 

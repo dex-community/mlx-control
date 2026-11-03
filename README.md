@@ -301,6 +301,36 @@ modo chirurgico (backup automatico a ogni scrittura) e **non tocca mai le chiavi
 
 Dopo aver cambiato provider o modello predefinito **riavvia MiniMax Code**.
 
+### La lista dei modelli è dinamica
+
+Non c'è da modificare `config.yaml` a mano: la lista dei modelli registrati in MiniMax Code segue
+automaticamente i modelli installati in `~/.mlxControl/models`.
+
+- **`mlx`** (server MLX diretto) e **`mlx-caveman`** (modello + Caveman) vengono aggiornati
+  entrambi, con le stesse voci e gli stessi limiti.
+- Ogni modello riceve una chiave stabile derivata dal nome della cartella
+  (es. `LiquidAI/LFM3-1.7B-MLX-8bit` → `lfm3-1.7b-mlx-8bit`); la chiave storica
+  `lfm3-1.7b-mlx` resta sempre valida e punta al modello attivo, così il modello predefinito e
+  il proxy di compattazione non si interrompono quando si cambia modello.
+- Il server MLX espone ogni modello come alias (`MLX_LM_MODEL_ALIASES`): scegliendo un modello
+  diverso dal selettore, il server lo carica su richiesta.
+
+La sincronizzazione avviene:
+
+- **con un clic**: pulsante *Sincronizza modelli* nella sezione *Modello* del pannello;
+- **in automatico**: all'avvio del pannello, dopo un download o un cambio di modello attivo, e a
+  ogni controllo periodico (max ogni 5 minuti);
+- **da terminale**:
+
+```bash
+~/.minimax/local-models/scripts/sync-models.py            # sincronizza
+~/.minimax/local-models/scripts/sync-models.py --check    # dice solo se serve (exit 1)
+~/.minimax/local-models/scripts/sync-models.py --aliases  # alias per il server MLX
+```
+
+Il file `~/.mlxControl/model-aliases.env` è generato dallo stesso script e letto da
+`start-mlx-server.sh` al riavvio del server.
+
 ## Problemi frequenti
 
 **Il modello non compare nella lista.** Riavvia MiniMax Code: la configurazione viene letta all'avvio.

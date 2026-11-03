@@ -238,7 +238,6 @@ final class AppState: ObservableObject {
     var modelStore = ModelStore()
 
     @Published var contextWindow: Int = 262144
-    @Published var defaultAgent: String = "locale"
     @Published var lastApplied: Date?
     @Published var busyMessage: String?
     /// "native" | "rizzo" | "rizzo-only"
@@ -246,17 +245,29 @@ final class AppState: ObservableObject {
     @Published var rizzoInstalled: Bool = false
     @Published var lastCompaction: [String: Any]?
     @Published var compressionMessage: String?
+    /// Esito dell'ultima sincronizzazione dei modelli con MiniMax Code.
+    @Published var registrationNotice: String?
 
     private var timer: Timer?
+    /// Ultimo controllo della lista modelli (sincronizzazione automatica).
+    private var lastModelSync: Date = .distantPast
 
     init() {
         settings.load()
         contextWindow = Self.currentContextWindow()
-        defaultAgent = Self.currentDefaultAgent()
         modelStore.refreshInstalled()
+        // Nuovi modelli servibili => il server MLX deve ricaricare gli alias.
+        modelStore.onServerRestartNeeded = { [weak self] in
+            self?.model.restart()
+        }
         refreshAll()
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             self?.refreshAll()
+        }
+        // Sincronizzazione automatica: la lista dei modelli in MiniMax Code
+        // segue da sola i modelli installati su disco.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            self?.syncModelsIfNeeded()
         }
         // Se il server non è attivo, lo riavvia da solo.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
@@ -268,8 +279,23 @@ final class AppState: ObservableObject {
 
     deinit { timer?.invalidate() }
 
+    /// Sincronizza i modelli solo se qualcosa e' cambiato (o ogni 5 minuti).
+    func syncModelsIfNeeded(force: Bool = false) {
+        let now = Date()
+        if !force, now.timeIntervalSince(lastModelSync) < 300 { return }
+        lastModelSync = now
+        modelStore.syncRegistration { message, needsRestart in
+            if message.contains("aggiornato") { self.registrationNotice = message }
+            // Nuovi alias = nuovi modelli servibili: il server va riavviato.
+            if needsRestart { self.model.restart() }
+        }
+    }
+
     func refreshAll() {
         model.refresh()
+        // La lista dei modelli puo' cambiare da fuori (download, attivazione):
+        // ogni tanto controlliamo e allineiamo MiniMax Code.
+        syncModelsIfNeeded()
         caveman.refresh()
         rizzo.refresh()
         fastCompact.refresh()
@@ -353,28 +379,6 @@ final class AppState: ObservableObject {
             let text = String(data: data, encoding: .utf8) ?? ""
             DispatchQueue.main.async { completion(p.terminationStatus, text) }
         }
-    }
-
-    /// Modello predefinito dell'agente: locale oppure cloud.
-    static func currentDefaultAgent() -> String {
-        let config = home + "/.minimax/config.yaml"
-        guard let text = try? String(contentsOfFile: config, encoding: .utf8) else { return "locale" }
-        for line in text.components(separatedBy: "\n") where line.hasPrefix("defaultModel:") {
-            return line.contains("custom_provider:mlx") ? "locale" : "cloud"
-        }
-        return "locale"
-    }
-
-    func setDefaultAgent(_ value: String) {
-        defaultAgent = value
-        let target = value == "locale"
-            ? "custom_provider:mlx/lfm3-1.7b-mlx"
-            : "minimax/MiniMax-M3.1-Flash"
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: Self.installDir + "/scripts/set-default-model.py")
-        p.arguments = [target]
-        try? p.run()
-        p.waitUntilExit()
     }
 
     /// Esce dall'app: scarica il LaunchAgent per non essere riavviata subito.
@@ -685,10 +689,29 @@ struct MenuContent: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
 
+                    Button {
+                        store.syncRegistration { message, needsRestart in
+                            state.registrationNotice = message
+                            // Nuovi alias = nuovi modelli servibili: il server va riavviato.
+                            if needsRestart { state.model.restart() }
+                        }
+                    } label: {
+                        Text("Sincronizza modelli")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                     if let status = store.statusMessage, !store.showDownloader {
                         Text(status).font(.system(size: 10)).foregroundStyle(.tertiary)
                     }
                     Spacer(minLength: 0)
+                }
+
+                if let notice = state.registrationNotice {
+                    Text(notice)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 if store.showDownloader {
@@ -697,26 +720,6 @@ struct MenuContent: View {
             }
 
             Divider()
-
-            VStack(alignment: .leading, spacing: 5) {
-                SectionLabel(text: "Agente predefinito")
-                paramRow("Usa") {
-                    ValuePicker(
-                        selection: Binding(
-                            get: { state.defaultAgent },
-                            set: { state.setDefaultAgent($0) }
-                        ),
-                        options: ["locale", "cloud"],
-                        label: { $0 == "locale" ? "LFM3 locale" : "MiniMax M3.1 Flash" }
-                    )
-                }
-                Text(state.defaultAgent == "locale"
-                     ? "L'agente usa il modello in locale: più lento e meno affidabile sui task lunghi."
-                     : "L'agente usa MiniMax M3.1 Flash; il modello locale resta selezionabile a mano.")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
 
             Divider()
 
@@ -733,7 +736,7 @@ struct MenuContent: View {
                             switch mode {
                             case "rizzo": return "Rizzo + LLM"
                             case "rizzo-only": return "Solo Rizzo"
-                            default: return "Nativa MiniMax"
+                            default: return "nativa"
                             }
                         },
                         width: 150

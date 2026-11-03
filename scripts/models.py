@@ -85,6 +85,18 @@ def active_model() -> str:
     return default if os.path.isdir(default) else ""
 
 
+def sync_registration() -> None:
+    """Allinea MiniMax Code (provider mlx e mlx-caveman) ai modelli installati."""
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sync-models.py")
+    if not os.path.exists(script):
+        return
+    try:
+        subprocess.run([sys.executable, script, "--json"], check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def set_active(path: str) -> None:
     if not os.path.isdir(path):
         raise SystemExit(f"ERR: percorso non valido: {path}")
@@ -92,6 +104,7 @@ def set_active(path: str) -> None:
     with open(ACTIVE_FILE, "w") as fh:
         fh.write(path)
     print(f"modello attivo: {path}")
+    sync_registration()
 
 
 # ------------------------------------------------------------ modelli remoti
@@ -171,6 +184,7 @@ print("DONE " + path)
     if proc.returncode != 0:
         print(json.dumps({"status": "error", "message": f"exit {proc.returncode}"}), flush=True)
         sys.exit(proc.returncode)
+    sync_registration()
 
 
 def main() -> int:
